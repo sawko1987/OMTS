@@ -5,10 +5,15 @@ from pathlib import Path
 from typing import List, Dict, Optional
 import sqlite3
 from datetime import datetime
+import logging
+import time
 
 from app.config import CATALOG_PATH
 from app.models import CatalogEntry, MaterialReplacementSet, MaterialSetItem
 from app.database import DatabaseManager
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
 
 
 class CatalogLoader:
@@ -90,19 +95,49 @@ class CatalogLoader:
     
     def search_parts(self, query: str) -> List[str]:
         """Быстрый поиск деталей по подстроке (case-insensitive)"""
+        start_time = time.time()
+        logger.info(f"Поиск деталей: запрос='{query}'")
+        
         if not query:
+            logger.info("Пустой запрос, возвращаем все детали")
             return self.get_all_parts()
         
-        with self.db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT DISTINCT part_code
-                FROM catalog_entries
-                WHERE part_code LIKE ? COLLATE NOCASE
-                ORDER BY part_code
-                LIMIT 100
-            """, (f"%{query}%",))
-            return [row['part_code'] for row in cursor.fetchall()]
+        try:
+            # Преобразуем запрос в верхний регистр для регистронезависимого поиска
+            # Это необходимо, так как COLLATE NOCASE не работает для кириллицы в SQLite
+            query_upper = query.upper()
+            search_pattern = f"%{query_upper}%"
+            logger.debug(f"Паттерн поиска (верхний регистр): '{search_pattern}'")
+            
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                # Используем UPPER() для колонки и передаем уже преобразованный паттерн
+                # Это обеспечивает регистронезависимый поиск для кириллицы
+                cursor.execute("""
+                    SELECT DISTINCT part_code
+                    FROM catalog_entries
+                    WHERE UPPER(part_code) LIKE ?
+                    ORDER BY part_code
+                """, (search_pattern,))
+                
+                results = [row['part_code'] for row in cursor.fetchall()]
+                elapsed_time = time.time() - start_time
+                
+                logger.info(f"Поиск завершен: найдено {len(results)} деталей за {elapsed_time:.3f} сек")
+                if results:
+                    logger.debug(f"Найденные детали (первые 10): {results[:10]}")
+                if len(results) > 1000:
+                    logger.warning(f"Найдено большое количество результатов ({len(results)}), это может замедлить работу интерфейса")
+                
+                return results
+        except sqlite3.Error as e:
+            elapsed_time = time.time() - start_time
+            logger.error(f"Ошибка при поиске деталей (запрос='{query}'): {e}, время выполнения: {elapsed_time:.3f} сек")
+            raise
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            logger.error(f"Неожиданная ошибка при поиске деталей (запрос='{query}'): {e}, время выполнения: {elapsed_time:.3f} сек")
+            raise
     
     def _add_entry_internal(self, cursor: sqlite3.Cursor, entry: CatalogEntry) -> Optional[int]:
         """Внутренний метод для добавления записи в каталог (используется внутри транзакции)"""
@@ -355,3 +390,124 @@ class CatalogLoader:
             print(f"Ошибка при получении материалов набора: {e}")
         
         return materials
+    
+    def get_replacement_set_by_id(self, set_id: int) -> Optional[MaterialReplacementSet]:
+        """Получить набор замены по ID"""
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, part_code, set_type, set_name, created_at
+                    FROM material_replacement_sets
+                    WHERE id = ?
+                """, (set_id,))
+                
+                row = cursor.fetchone()
+                if row:
+                    created_at_value = row['created_at']
+                    replacement_set = MaterialReplacementSet(
+                        id=row['id'],
+                        part_code=row['part_code'],
+                        set_type=row['set_type'],
+                        set_name=row['set_name'],
+                        created_at=created_at_value
+                    )
+                    # Загружаем материалы набора
+                    replacement_set.materials = self.get_materials_in_set(row['id'])
+                    return replacement_set
+        except sqlite3.Error as e:
+            print(f"Ошибка при получении набора замены: {e}")
+        
+        return None
+    
+    def update_replacement_set(self, set_id: int, materials: List[CatalogEntry]) -> bool:
+        """Обновить материалы в наборе замены"""
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Получаем информацию о наборе
+                cursor.execute("""
+                    SELECT part_code, set_type FROM material_replacement_sets WHERE id = ?
+                """, (set_id,))
+                set_info = cursor.fetchone()
+                if not set_info:
+                    return False
+                
+                part_code = set_info['part_code']
+                set_type = set_info['set_type']
+                
+                # Удаляем старые материалы набора из material_set_items и catalog_entries
+                cursor.execute("""
+                    SELECT catalog_entry_id FROM material_set_items WHERE set_id = ?
+                """, (set_id,))
+                old_entry_ids = [row['catalog_entry_id'] for row in cursor.fetchall()]
+                
+                # Удаляем связи
+                cursor.execute("DELETE FROM material_set_items WHERE set_id = ?", (set_id,))
+                
+                # Удаляем записи каталога
+                for entry_id in old_entry_ids:
+                    cursor.execute("DELETE FROM catalog_entries WHERE id = ?", (entry_id,))
+                
+                # Добавляем новые материалы
+                for order_idx, material in enumerate(materials):
+                    material.part = part_code
+                    material.is_part_of_set = True
+                    material.replacement_set_id = set_id
+                    
+                    entry_id = self._add_entry_internal(cursor, material)
+                    if entry_id:
+                        cursor.execute("""
+                            INSERT INTO material_set_items 
+                            (set_id, catalog_entry_id, order_index)
+                            VALUES (?, ?, ?)
+                        """, (set_id, entry_id, order_idx))
+                
+                conn.commit()
+                
+                # Обновляем кэш
+                self._parts_cache = None
+                self._by_part = {}
+                self._entries = []
+                self.load()
+                
+                return True
+        except sqlite3.Error as e:
+            print(f"Ошибка при обновлении набора замены: {e}")
+            return False
+    
+    def delete_replacement_set(self, set_id: int) -> bool:
+        """Удалить набор замены и все связанные материалы"""
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Получаем ID записей каталога, связанных с набором
+                cursor.execute("""
+                    SELECT catalog_entry_id FROM material_set_items WHERE set_id = ?
+                """, (set_id,))
+                entry_ids = [row['catalog_entry_id'] for row in cursor.fetchall()]
+                
+                # Удаляем связи
+                cursor.execute("DELETE FROM material_set_items WHERE set_id = ?", (set_id,))
+                
+                # Удаляем записи каталога
+                for entry_id in entry_ids:
+                    cursor.execute("DELETE FROM catalog_entries WHERE id = ?", (entry_id,))
+                
+                # Удаляем сам набор
+                cursor.execute("DELETE FROM material_replacement_sets WHERE id = ?", (set_id,))
+                
+                conn.commit()
+                
+                # Обновляем кэш
+                self._parts_cache = None
+                self._by_part = {}
+                self._entries = []
+                self.load()
+                
+                return True
+        except sqlite3.Error as e:
+            print(f"Ошибка при удалении набора замены: {e}")
+            return False
