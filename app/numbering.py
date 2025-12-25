@@ -8,6 +8,7 @@ from typing import Optional
 
 from app.config import NUMBERING_FILE, DATABASE_PATH
 from app.database import DatabaseManager
+from app.settings_manager import SettingsManager
 
 
 class NumberingManager:
@@ -17,6 +18,7 @@ class NumberingManager:
         self.db_manager = db_manager or DatabaseManager()
         self.numbering_file = numbering_file or NUMBERING_FILE
         self._use_db = DATABASE_PATH.exists()
+        self.settings_manager = SettingsManager()
     
     def get_next_number(self) -> int:
         """Получить следующий номер документа"""
@@ -39,8 +41,9 @@ class NumberingManager:
                             (new_number, current_year)
                         )
                     else:
-                        # Создаём запись для нового года
-                        new_number = 1
+                        # Создаём запись для нового года с начальным номером из настроек
+                        starting_number = self.settings_manager.get_starting_number()
+                        new_number = starting_number
                         cursor.execute(
                             "INSERT INTO numbering (year, last_number) VALUES (?, ?)",
                             (current_year, new_number)
@@ -67,7 +70,8 @@ class NumberingManager:
                     row = cursor.fetchone()
                     if row:
                         return row['last_number'] + 1
-                    return 1
+                    # Если записи нет, возвращаем начальный номер из настроек
+                    return self.settings_manager.get_starting_number()
             except Exception:
                 self._use_db = False
                 return self._get_current_number_json()
@@ -77,7 +81,8 @@ class NumberingManager:
     def _get_next_number_json(self) -> int:
         """Получить следующий номер из JSON (fallback)"""
         current_year = date.today().year
-        data = {"year": current_year, "last": 0}
+        starting_number = self.settings_manager.get_starting_number()
+        data = {"year": current_year, "last": starting_number - 1}
         
         if self.numbering_file.exists():
             try:
@@ -86,10 +91,10 @@ class NumberingManager:
             except (json.JSONDecodeError, FileNotFoundError):
                 pass
         
-        # Если год изменился, сбрасываем счётчик
+        # Если год изменился, сбрасываем счётчик на начальный номер из настроек
         if data.get("year") != current_year:
             data["year"] = current_year
-            data["last"] = 0
+            data["last"] = starting_number - 1
         
         # Увеличиваем номер
         data["last"] += 1
@@ -100,7 +105,8 @@ class NumberingManager:
     def _get_current_number_json(self) -> int:
         """Получить текущий номер из JSON (fallback)"""
         current_year = date.today().year
-        data = {"year": current_year, "last": 0}
+        starting_number = self.settings_manager.get_starting_number()
+        data = {"year": current_year, "last": starting_number - 1}
         
         if self.numbering_file.exists():
             try:
@@ -110,9 +116,9 @@ class NumberingManager:
                 pass
         
         if data.get("year") != current_year:
-            return 1
+            return starting_number
         
-        return data.get("last", 0) + 1
+        return data.get("last", starting_number - 1) + 1
     
     def _save_json(self, data: dict):
         """Сохранить данные в JSON"""

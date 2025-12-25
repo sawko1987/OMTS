@@ -13,6 +13,17 @@ from app.numbering import NumberingManager
 from app.product_store import ProductStore
 from app.database import DatabaseManager
 
+
+def get_current_month_name() -> str:
+    """Получить название текущего месяца на русском языке"""
+    months = {
+        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
+        5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
+        9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+    }
+    return months.get(date.today().month, "Неизвестно")
+
+
 class DocumentInfoWidget(QWidget):
     """Виджет реквизитов документа"""
     
@@ -151,32 +162,22 @@ class DocumentInfoWidget(QWidget):
         self.number_label.setText(str(next_num))
         self.document_data.document_number = next_num
         
-        # Дата внедрения
-        if self.document_data.implementation_date:
-            qdate = QDate.fromString(
-                self.document_data.implementation_date.isoformat(),
-                Qt.ISODate
-            )
-            self.date_edit.setDate(qdate)
+        # Срок действия (партия) - устанавливаем текущий месяц по умолчанию, если не задано
+        if not self.document_data.validity_period:
+            current_month = get_current_month_name()
+            self.validity_edit.setText(current_month)
+            self.document_data.validity_period = current_month
         else:
-            self.date_edit.setDate(QDate.currentDate())
-        
-        # Загружаем изделия
-        self.load_products()
-        
-        # Остальные поля
-        self.validity_edit.setText(self.document_data.validity_period or "")
-        
-        # Устанавливаем изделие
-        if self.document_data.product:
-            index = self.product_combo.findText(self.document_data.product)
-            if index >= 0:
-                self.product_combo.setCurrentIndex(index)
-            else:
-                self.product_combo.setEditText(self.document_data.product)
-        
-        self.reason_edit.setText(self.document_data.reason)
-        self.tko_edit.setText(self.document_data.tko_conclusion)
+            self.validity_edit.setText(self.document_data.validity_period)
+    
+    def refresh_number(self):
+        """Обновить только номер документа"""
+        # Пересоздаем NumberingManager, чтобы гарантировать чтение актуальных данных
+        self.numbering = NumberingManager(self.db_manager)
+        next_num = self.numbering.get_current_number()
+        self.number_label.setText(str(next_num))
+        # Обновляем document_number, чтобы следующий документ использовал новый номер
+        self.document_data.document_number = next_num
     
     def update_document_data(self):
         """Обновить данные документа из полей"""

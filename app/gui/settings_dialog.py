@@ -3,12 +3,13 @@
 """
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QMessageBox, QFileDialog
+    QLineEdit, QMessageBox, QFileDialog, QSpinBox
 )
 from pathlib import Path
 
 from app.settings_manager import SettingsManager
 from app.config import PROJECT_ROOT
+from app.numbering import NumberingManager
 
 
 class SettingsDialog(QDialog):
@@ -17,6 +18,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.settings_manager = SettingsManager()
+        self.numbering_manager = NumberingManager()
         self.init_ui()
         self.load_settings()
     
@@ -44,6 +46,38 @@ class SettingsDialog(QDialog):
         output_layout.addLayout(path_layout)
         layout.addLayout(output_layout)
         
+        # Настройка начального номера
+        numbering_layout = QVBoxLayout()
+        numbering_label = QLabel("Начальный номер для нумерации извещений:")
+        numbering_layout.addWidget(numbering_label)
+        
+        self.starting_number_spin = QSpinBox()
+        self.starting_number_spin.setMinimum(1)
+        self.starting_number_spin.setMaximum(999999)
+        numbering_layout.addWidget(self.starting_number_spin)
+        
+        numbering_info = QLabel("Номер, с которого будет начинаться нумерация при создании новой записи для года")
+        numbering_info.setStyleSheet("color: gray; font-size: 10px;")
+        numbering_layout.addWidget(numbering_info)
+        
+        layout.addLayout(numbering_layout)
+        
+        # Настройка текущего номера (следующий номер, который будет использован)
+        current_number_layout = QVBoxLayout()
+        current_number_label = QLabel("Следующий номер извещения (текущий):")
+        current_number_layout.addWidget(current_number_label)
+        
+        self.current_number_spin = QSpinBox()
+        self.current_number_spin.setMinimum(1)
+        self.current_number_spin.setMaximum(999999)
+        current_number_layout.addWidget(self.current_number_spin)
+        
+        current_number_info = QLabel("Установите номер, с которого продолжить нумерацию. Будет применено немедленно для текущего года.")
+        current_number_info.setStyleSheet("color: gray; font-size: 10px;")
+        current_number_layout.addWidget(current_number_info)
+        
+        layout.addLayout(current_number_layout)
+        
         layout.addStretch()
         
         # Кнопки
@@ -69,6 +103,14 @@ class SettingsDialog(QDialog):
             default_path = str(PROJECT_ROOT / "output")
             self.path_edit.setText(default_path)
             self.path_edit.setPlaceholderText("Не выбрано (будет использована папка по умолчанию)")
+        
+        # Загружаем начальный номер
+        starting_number = self.settings_manager.get_starting_number()
+        self.starting_number_spin.setValue(starting_number)
+        
+        # Загружаем текущий номер (следующий номер, который будет использован)
+        current_number = self.numbering_manager.get_current_number()
+        self.current_number_spin.setValue(current_number)
     
     def browse_directory(self):
         """Выбрать папку для сохранения"""
@@ -114,6 +156,22 @@ class SettingsDialog(QDialog):
         
         try:
             self.settings_manager.set_output_directory(path)
+            
+            # Сохраняем начальный номер
+            starting_number = self.starting_number_spin.value()
+            self.settings_manager.set_starting_number(starting_number)
+            
+            # Устанавливаем текущий номер (если он был изменен)
+            current_number = self.current_number_spin.value()
+            original_current_number = self.numbering_manager.get_current_number()
+            if current_number != original_current_number:
+                self.numbering_manager.set_number(current_number)
+                QMessageBox.information(
+                    self,
+                    "Номер установлен",
+                    f"Следующий номер извещения установлен: {current_number}"
+                )
+            
             super().accept()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить настройки:\n{e}")

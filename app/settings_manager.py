@@ -20,7 +20,8 @@ class SettingsManager:
     def _load_settings(self) -> dict:
         """Загрузить настройки из файла"""
         default_settings = {
-            "output_directory": None  # Путь к папке сохранения документов
+            "output_directory": None,  # Путь к папке сохранения документов
+            "starting_number": 1  # Начальный номер для нумерации извещений
         }
         
         if not self.settings_file.exists():
@@ -59,4 +60,15 @@ class SettingsManager:
             self._save_settings()
         else:
             raise ValueError(f"Путь не существует или не является папкой: {path}")
+    
+    def get_starting_number(self) -> int:
+        """Получить начальный номер для нумерации извещений"""
+        return self._settings.get("starting_number", 1)
+    
+    def set_starting_number(self, number: int):
+        """Установить начальный номер для нумерации извещений"""
+        if not isinstance(number, int) or number < 1:
+            raise ValueError("Начальный номер должен быть положительным целым числом")
+        self._settings["starting_number"] = number
+        self._save_settings()
 

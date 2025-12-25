@@ -121,7 +121,8 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self)
         if dialog.exec():
             # Настройки сохранены в диалоге
-            pass
+            # Обновляем номер документа, если он был изменен
+            self.doc_info_widget.refresh_number()
     
     def on_product_changed(self, product_name: str):
         """Обработка изменения изделия"""
