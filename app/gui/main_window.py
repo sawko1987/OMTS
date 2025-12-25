@@ -21,6 +21,7 @@ from app.catalog_loader import CatalogLoader
 from app.history_store import HistoryStore
 from app.migrate_to_sqlite import migrate_all
 from app.settings_manager import SettingsManager
+from app.document_store import DocumentStore
 
 class MainWindow(QMainWindow):
     """Главное окно приложения"""
@@ -28,6 +29,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.document_data = DocumentData()
+        
+        # Счётчик дополнительных страниц (0 = первая страница, 1 = 1+, 2 = 2+ и т.д.)
+        self.current_additional_page = None  # None = данные идут на первую страницу
         
         # Инициализация БД (до создания UI)
         self.init_database()
@@ -38,6 +42,7 @@ class MainWindow(QMainWindow):
         self.catalog_loader = CatalogLoader(self.db_manager)
         self.history_store = HistoryStore(self.db_manager)
         self.settings_manager = SettingsManager()
+        self.document_store = DocumentStore(self.db_manager, self.catalog_loader)
         
         self.init_ui()
         self.load_catalog()
@@ -64,6 +69,14 @@ class MainWindow(QMainWindow):
         
         # Меню
         menubar = self.menuBar()
+        
+        # Меню "Документ"
+        document_menu = menubar.addMenu("Документ")
+        new_doc_action = document_menu.addAction("Новый документ")
+        new_doc_action.triggered.connect(self.new_document)
+        open_doc_action = document_menu.addAction("Открыть документ...")
+        open_doc_action.triggered.connect(self.open_document)
+        
         settings_menu = menubar.addMenu("Настройки")
         settings_action = settings_menu.addAction("Настройки...")
         settings_action.triggered.connect(self.show_settings)
@@ -91,6 +104,8 @@ class MainWindow(QMainWindow):
             self.history_store,
             self.product_store
         )
+        # Передаём функцию для получения текущего номера доп. страницы
+        self.changes_widget.get_current_additional_page = lambda: self.current_additional_page
         self.tabs.addTab(self.changes_widget, "Изменения материалов")
         
         # Кнопки внизу
@@ -99,6 +114,10 @@ class MainWindow(QMainWindow):
         self.btn_generate = QPushButton("Сгенерировать документ")
         self.btn_generate.clicked.connect(self.generate_document)
         button_layout.addWidget(self.btn_generate)
+        
+        self.btn_add_additional_page = QPushButton("Добавить данные для доп. страницы")
+        self.btn_add_additional_page.clicked.connect(self.add_additional_page_data)
+        button_layout.addWidget(self.btn_add_additional_page)
         
         self.btn_clear = QPushButton("Очистить")
         self.btn_clear.clicked.connect(self.clear_data)
@@ -281,9 +300,99 @@ class MainWindow(QMainWindow):
         try:
             generator = ExcelGenerator()
             generator.generate(self.document_data, file_path)
+            
+            # Сохраняем документ в БД
+            self.document_store.save_document(self.document_data, str(file_path))
+            
             QMessageBox.information(self, "Успех", f"Документ успешно создан:\n{file_path}")
+            
+            # Создаём новый документ с новым номером
+            self.new_document()
+            
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось создать документ:\n{e}")
+    
+    def new_document(self):
+        """Создать новый документ"""
+        # Проверяем, есть ли несохранённые изменения
+        if self.document_data.part_changes or self.document_data.product:
+            reply = QMessageBox.question(
+                self,
+                "Подтверждение",
+                "Создать новый документ? Текущие данные будут очищены.",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+        
+        # Создаём новый документ
+        self.document_data = DocumentData()
+        self.current_additional_page = None  # Сбрасываем счётчик доп. страниц
+        self.doc_info_widget.document_data = self.document_data
+        self.changes_widget.document_data = self.document_data
+        self.doc_info_widget.refresh()
+        self.changes_widget.refresh()
+        self.changes_widget.update_product_filter()
+    
+    def open_document(self):
+        """Открыть существующий документ"""
+        from app.gui.document_selection_dialog import DocumentSelectionDialog
+        
+        dialog = DocumentSelectionDialog(self.document_store, self)
+        if dialog.exec():
+            document_number, year = dialog.get_selected_document()
+            if document_number:
+                loaded_data = self.document_store.load_document(document_number, year)
+                if loaded_data:
+                    self.document_data = loaded_data
+                    # Определяем максимальный номер доп. страницы для восстановления счётчика
+                    max_page = 0
+                    for part_change in self.document_data.part_changes:
+                        if part_change.additional_page_number is not None:
+                            max_page = max(max_page, part_change.additional_page_number)
+                    self.current_additional_page = max_page if max_page > 0 else None
+                    self.doc_info_widget.document_data = self.document_data
+                    self.changes_widget.document_data = self.document_data
+                    self.doc_info_widget.refresh()
+                    self.changes_widget.refresh()
+                    self.changes_widget.update_product_filter()
+                    QMessageBox.information(self, "Успех", f"Документ №{document_number} загружен")
+                else:
+                    QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить документ №{document_number}")
+    
+    def add_additional_page_data(self):
+        """Добавить данные для дополнительной страницы"""
+        # Определяем номер следующей доп. страницы
+        # Находим максимальный номер доп. страницы среди существующих данных
+        max_page = 0
+        for part_change in self.document_data.part_changes:
+            if part_change.additional_page_number is not None:
+                max_page = max(max_page, part_change.additional_page_number)
+        
+        # Увеличиваем счётчик для новой страницы
+        self.current_additional_page = max_page + 1
+        
+        page_label = f"{self.current_additional_page}+"
+        
+        message = (
+            f"Режим добавления данных для страницы {page_label} активирован.\n\n"
+            f"Все детали и материалы, которые вы добавите сейчас, будут размещены на странице {page_label}.\n\n"
+            f"Переключить на вкладку 'Изменения материалов'?"
+        )
+        
+        reply = QMessageBox.question(
+            self,
+            f"Добавить данные для страницы {page_label}",
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Переключаемся на вкладку изменений материалов
+            self.tabs.setCurrentIndex(1)
+            # Фокусируемся на виджете изменений
+            self.changes_widget.setFocus()
     
     def clear_data(self):
         """Очистить все данные"""
@@ -296,6 +405,7 @@ class MainWindow(QMainWindow):
         
         if reply == QMessageBox.Yes:
             self.document_data = DocumentData()
+            self.current_additional_page = None  # Сбрасываем счётчик доп. страниц
             self.doc_info_widget.document_data = self.document_data
             self.changes_widget.document_data = self.document_data
             self.doc_info_widget.refresh()

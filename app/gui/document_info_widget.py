@@ -36,6 +36,7 @@ class DocumentInfoWidget(QWidget):
         self.numbering = NumberingManager(self.db_manager)
         self.product_store = product_store
         self.init_ui()
+        self.load_products()
         self.refresh()
     
     def init_ui(self):
@@ -157,18 +158,43 @@ class DocumentInfoWidget(QWidget):
     
     def refresh(self):
         """Обновить отображение"""
-        # Номер документа
-        next_num = self.numbering.get_current_number()
-        self.number_label.setText(str(next_num))
-        self.document_data.document_number = next_num
+        # Номер документа - если уже установлен, используем его, иначе берём следующий
+        if self.document_data.document_number:
+            self.number_label.setText(str(self.document_data.document_number))
+        else:
+            next_num = self.numbering.get_current_number()
+            self.number_label.setText(str(next_num))
+            self.document_data.document_number = next_num
         
-        # Срок действия (партия) - устанавливаем текущий месяц по умолчанию, если не задано
-        if not self.document_data.validity_period:
+        # Дата внедрения
+        if self.document_data.implementation_date:
+            impl_date = self.document_data.implementation_date
+            qdate = QDate(impl_date.year, impl_date.month, impl_date.day)
+            self.date_edit.setDate(qdate)
+        else:
+            self.date_edit.setDate(QDate.currentDate())
+        
+        # Срок действия (партия)
+        if self.document_data.validity_period:
+            self.validity_edit.setText(self.document_data.validity_period)
+        else:
             current_month = get_current_month_name()
             self.validity_edit.setText(current_month)
             self.document_data.validity_period = current_month
-        else:
-            self.validity_edit.setText(self.document_data.validity_period)
+        
+        # Изделие
+        if self.document_data.product:
+            index = self.product_combo.findText(self.document_data.product)
+            if index >= 0:
+                self.product_combo.setCurrentIndex(index)
+            else:
+                self.product_combo.setEditText(self.document_data.product)
+        
+        # Причина
+        self.reason_edit.setText(self.document_data.reason)
+        
+        # Заключение ТКО
+        self.tko_edit.setText(self.document_data.tko_conclusion)
     
     def refresh_number(self):
         """Обновить только номер документа"""

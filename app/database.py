@@ -133,6 +133,20 @@ class DatabaseManager:
                 )
             """)
             
+            # Таблица документов (извещений)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_number INTEGER NOT NULL,
+                    year INTEGER NOT NULL,
+                    data_json TEXT NOT NULL,
+                    output_file_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(document_number, year)
+                )
+            """)
+            
             # Миграция существующих таблиц
             self._migrate_schema(cursor)
             
@@ -166,6 +180,8 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_replacement_sets_part_code ON material_replacement_sets(part_code)",
             "CREATE INDEX IF NOT EXISTS idx_set_items_set_id ON material_set_items(set_id)",
             "CREATE INDEX IF NOT EXISTS idx_set_items_entry_id ON material_set_items(catalog_entry_id)",
+            "CREATE INDEX IF NOT EXISTS idx_documents_number_year ON documents(document_number, year)",
+            "CREATE INDEX IF NOT EXISTS idx_documents_year ON documents(year)",
         ]
         
         for index_sql in indexes:

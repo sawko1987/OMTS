@@ -33,6 +33,7 @@ class PartChanges:
     """Изменения для одной детали"""
     part: str  # Код детали
     materials: List[MaterialChange] = field(default_factory=list)  # Список материалов
+    additional_page_number: Optional[int] = None  # Номер доп. страницы (None = первая страница, 1 = 1+, 2 = 2+ и т.д.)
 
 @dataclass
 class DocumentData:

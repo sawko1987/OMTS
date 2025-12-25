@@ -247,6 +247,11 @@ class ExcelGenerator:
         current_part_data = None
         
         for part_change in doc_data.part_changes:
+            # Пропускаем данные для доп. страниц - они обрабатываются отдельно
+            if part_change.additional_page_number is not None:
+                remaining_data.append(part_change)
+                continue
+            
             # Проверяем, есть ли изменения для этой детали
             changed_materials = [m for m in part_change.materials if m.is_changed and m.after_name]
             if not changed_materials:
@@ -318,70 +323,150 @@ class ExcelGenerator:
     def handle_additional_sheets(self, wb, remaining_data, doc_data: DocumentData):
         """Обработать дополнительные листы при переполнении
         
-        Записывает ТОЛЬКО значения, сохраняя разметку шаблона
+        Записывает ТОЛЬКО значения, сохраняя разметку шаблона.
+        Группирует данные по additional_page_number и распределяет по соответствующим страницам.
         """
+        # Ищем шаблонные дополнительные листы (обычно "1+", "2+" и т.д.)
+        additional_sheet_names = sorted([name for name in wb.sheetnames if "+" in name])
+        
         if not remaining_data:
+            # Нет данных для доп. листов - скрываем все листы с "+"
+            for sheet_name in additional_sheet_names:
+                sheet = wb[sheet_name]
+                sheet.sheet_state = 'hidden'
             return
         
-        # Ищем шаблон дополнительного листа (обычно "1+", "2+" и т.д.)
-        additional_sheet_names = [name for name in wb.sheetnames if "+" in name]
-        
-        if not additional_sheet_names:
-            # Если нет готовых листов, создаём новый на основе первого
-            # Но лучше использовать существующие шаблоны
-            return
-        
-        # Используем первый доступный дополнительный лист
-        sheet = wb[additional_sheet_names[0]]
-        
-        # Очищаем старые данные на дополнительном листе
-        self.clear_additional_sheet_data(sheet)
-        
-        # Данные на доп. листе начинаются примерно со строки 7 (из анализа)
-        data_start_row = 7
-        current_row = data_start_row
+        # Группируем данные по номеру доп. страницы
+        data_by_page = {}  # {page_number: [PartChanges]}
         
         for part_change in remaining_data:
-            changed_materials = [m for m in part_change.materials if m.is_changed and m.after_name]
-            if not changed_materials:
-                continue
+            page_num = part_change.additional_page_number
+            if page_num is None:
+                # Данные без метки - это переполнение первой страницы, идёт на 1+
+                page_num = 1
+            else:
+                # Данные с меткой - идут на указанную страницу
+                page_num = part_change.additional_page_number
             
-            # Записываем деталь (только значения)
-            cell = get_merged_cell_value(sheet, current_row, 1)
-            cell.value = part_change.part
-            cell = get_merged_cell_value(sheet, current_row, 7)
-            cell.value = part_change.part
-            current_row += 1
+            if page_num not in data_by_page:
+                data_by_page[page_num] = []
+            data_by_page[page_num].append(part_change)
+        
+        # Определяем максимальный номер страницы
+        max_page = max(data_by_page.keys()) if data_by_page else 0
+        
+        # Если нужно больше листов, чем есть в шаблоне - создаём новые
+        if max_page > len(additional_sheet_names):
+            # Берём первый шаблонный лист для копирования
+            if additional_sheet_names:
+                template_sheet = wb[additional_sheet_names[0]]
+                for i in range(len(additional_sheet_names), max_page):
+                    new_sheet_name = f"{i+1}+"
+                    new_sheet = wb.copy_worksheet(template_sheet)
+                    new_sheet.title = new_sheet_name
+                    additional_sheet_names.append(new_sheet_name)
+            else:
+                # Если нет шаблонных листов, создаём на основе основного листа
+                main_sheet = wb[self.config["main_sheet"]]
+                for i in range(max_page):
+                    new_sheet_name = f"{i+1}+"
+                    new_sheet = wb.copy_worksheet(main_sheet)
+                    new_sheet.title = new_sheet_name
+                    additional_sheet_names.append(new_sheet_name)
+        
+        # Заполняем листы согласно номерам страниц
+        for page_num in sorted(data_by_page.keys()):
+            # Индекс листа (page_num = 1 -> индекс 0 для "1+")
+            sheet_idx = page_num - 1
             
-            # Записываем материалы (только значения)
-            for material in changed_materials:
-                # Левая часть
-                cell = get_merged_cell_value(sheet, current_row, 1)
-                cell.value = material.catalog_entry.before_name
-                cell = get_merged_cell_value(sheet, current_row, 4)
-                cell.value = material.catalog_entry.unit
-                cell = get_merged_cell_value(sheet, current_row, 5)
-                cell.value = material.catalog_entry.norm
+            if sheet_idx < len(additional_sheet_names):
+                sheet_name = additional_sheet_names[sheet_idx]
+                sheet = wb[sheet_name]
+                sheet.sheet_state = 'visible'
                 
-                # Правая часть
-                cell = get_merged_cell_value(sheet, current_row, 7)
-                cell.value = material.after_name
-                cell = get_merged_cell_value(sheet, current_row, 9)
-                if material.after_unit:
-                    cell.value = material.after_unit
-                else:
-                    cell.value = material.catalog_entry.unit
-                if material.after_norm is not None:
-                    cell = get_merged_cell_value(sheet, current_row, 10)
-                    cell.value = material.after_norm
+                # Очищаем старые данные
+                self.clear_additional_sheet_data(sheet)
                 
-                current_row += 1
+                # Заполняем шапку
+                self.fill_additional_sheet_header(sheet, doc_data)
+                
+                # Заполняем данные
+                data_start_row = 2
+                current_row = data_start_row
+                
+                for part_change in data_by_page[page_num]:
+                    changed_materials = [m for m in part_change.materials if m.is_changed and m.after_name]
+                    if not changed_materials:
+                        continue
+                    
+                    # Записываем деталь
+                    cell = get_merged_cell_value(sheet, current_row, 1)
+                    cell.value = part_change.part
+                    cell = get_merged_cell_value(sheet, current_row, 7)
+                    cell.value = part_change.part
+                    current_row += 1
+                    
+                    # Записываем материалы
+                    for material in changed_materials:
+                        # Левая часть
+                        cell = get_merged_cell_value(sheet, current_row, 1)
+                        cell.value = material.catalog_entry.before_name
+                        cell = get_merged_cell_value(sheet, current_row, 4)
+                        cell.value = material.catalog_entry.unit
+                        cell = get_merged_cell_value(sheet, current_row, 5)
+                        cell.value = material.catalog_entry.norm
+                        
+                        # Правая часть
+                        cell = get_merged_cell_value(sheet, current_row, 7)
+                        cell.value = material.after_name
+                        cell = get_merged_cell_value(sheet, current_row, 9)
+                        if material.after_unit:
+                            cell.value = material.after_unit
+                        else:
+                            cell.value = material.catalog_entry.unit
+                        if material.after_norm is not None:
+                            cell = get_merged_cell_value(sheet, current_row, 10)
+                            cell.value = material.after_norm
+                        
+                        current_row += 1
+        
+        # Скрываем неиспользуемые листы
+        for sheet_idx in range(max_page, len(additional_sheet_names)):
+            sheet_name = additional_sheet_names[sheet_idx]
+            sheet = wb[sheet_name]
+            sheet.sheet_state = 'hidden'
 
+    def fill_additional_sheet_header(self, sheet, doc_data: DocumentData):
+        """Заполнить шапку на дополнительном листе (номер извещения и дата)"""
+        # Номер документа - ищем ячейку со строкой "извещение" в строках 1-2
+        for row in range(1, 3):
+            for col in range(1, 16):
+                cell = get_merged_cell_value(sheet, row, col)
+                if cell.value and "извещение" in str(cell.value).lower():
+                    text = str(cell.value)
+                    if "№" in text:
+                        import re
+                        new_text = re.sub(r'№\s*\d+', f'№ {doc_data.document_number}', text)
+                        cell.value = new_text
+                        break
+        
+        # Дата внедрения - ищем в строках 1-2, колонка E (как на первом листе)
+        if doc_data.implementation_date:
+            # Сначала пробуем строку 1, колонка E
+            cell = get_merged_cell_value(sheet, 1, 5)
+            if not cell.value or str(cell.value).strip() == "":
+                # Если пусто, пробуем строку 2
+                cell = get_merged_cell_value(sheet, 2, 5)
+            
+            # Сохраняем существующий формат, если он есть, иначе устанавливаем формат даты
+            if not cell.number_format or cell.number_format == 'General':
+                cell.number_format = "DD.MM.YYYY"
+            cell.value = doc_data.implementation_date
     
     def clear_additional_sheet_data(self, sheet):
         """Очистить старые данные на дополнительном листе"""
-        # Данные начинаются со строки 7
-        data_start_row = 7
+        # Данные начинаются со строки 2, но очищаем начиная со строки 1 для шапки
+        data_start_row = 1
         max_row = sheet.max_row
         
         # Очищаем данные в области таблицы (колонки A-N)

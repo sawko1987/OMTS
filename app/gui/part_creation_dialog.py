@@ -19,9 +19,21 @@ from app.gui.material_selection_dialog import MaterialSelectionDialog
 class PartCreationDialog(QDialog):
     """Диалог для создания новой детали с материалами"""
     
-    def __init__(self, catalog_loader: CatalogLoader = None, parent=None):
+    def __init__(self, catalog_loader: CatalogLoader = None, parent=None, 
+                 edit_set_id: Optional[int] = None,
+                 copy_from_materials: Optional[tuple] = None):
         super().__init__(parent)
-        self.setWindowTitle("Создать новую деталь")
+        self.edit_set_id = edit_set_id
+        self.edit_from_set_id: Optional[int] = None
+        self.edit_to_set_id: Optional[int] = None
+        self.is_edit_mode = edit_set_id is not None
+        self.copy_from_materials = copy_from_materials  # (from_materials, to_materials)
+        
+        if self.is_edit_mode:
+            self.setWindowTitle("Редактировать набор материалов")
+        else:
+            self.setWindowTitle("Создать новую деталь")
+        
         self.setMinimumSize(900, 700)
         self.entry: CatalogEntry = None
         self.from_materials: List[CatalogEntry] = []
@@ -29,12 +41,29 @@ class PartCreationDialog(QDialog):
         self.catalog_loader = catalog_loader or CatalogLoader()
         self.is_replacement_set_mode = False
         self.init_ui()
+        
+        # Если режим редактирования, загружаем данные
+        if self.is_edit_mode:
+            self.load_set_for_editing()
+        # Если режим копирования, предзаполняем материалы
+        elif self.copy_from_materials:
+            from_materials, to_materials = self.copy_from_materials
+            self.from_materials = from_materials.copy() if from_materials else []
+            self.to_materials = to_materials.copy() if to_materials else []
+            # Включаем режим набора материалов
+            self.mode_set.setChecked(True)
+            self.is_replacement_set_mode = True
+            self.single_widget.setVisible(False)
+            self.set_widget.setVisible(True)
+            # Обновляем таблицы
+            self.update_from_table()
+            self.update_to_table()
     
     def init_ui(self):
         """Инициализация интерфейса"""
         layout = QVBoxLayout(self)
         
-        # Переключатель режимов
+        # Переключатель режимов (скрыт в режиме редактирования)
         mode_group = QGroupBox("Режим создания")
         mode_layout = QVBoxLayout()
         self.mode_single = QRadioButton("Одиночный материал")
@@ -45,6 +74,13 @@ class PartCreationDialog(QDialog):
         mode_layout.addWidget(self.mode_single)
         mode_layout.addWidget(self.mode_set)
         mode_group.setLayout(mode_layout)
+        
+        # В режиме редактирования скрываем переключатель и сразу включаем режим набора
+        if self.is_edit_mode:
+            mode_group.setVisible(False)
+            self.mode_set.setChecked(True)
+            self.is_replacement_set_mode = True
+        
         layout.addWidget(mode_group)
         
         # Виджет для одиночного материала
@@ -53,7 +89,12 @@ class PartCreationDialog(QDialog):
         
         # Виджет для набора материалов
         self.set_widget = self.create_replacement_set_widget()
-        self.set_widget.setVisible(False)
+        if not self.is_edit_mode:
+            self.set_widget.setVisible(False)
+        else:
+            self.set_widget.setVisible(True)
+            # В режиме редактирования делаем поле кода детали только для чтения
+            self.part_edit_set.setReadOnly(True)
         layout.addWidget(self.set_widget)
         
         # Кнопки
@@ -160,6 +201,8 @@ class PartCreationDialog(QDialog):
         self.from_table.horizontalHeader().setStretchLastSection(False)
         self.from_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.from_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        # Подключаем обработчик изменений для обновления норм (один раз)
+        self.from_table.itemChanged.connect(self.on_from_norm_changed)
         from_layout.addWidget(self.from_table)
         from_group.setLayout(from_layout)
         layout.addWidget(from_group)
@@ -191,6 +234,8 @@ class PartCreationDialog(QDialog):
         self.to_table.horizontalHeader().setStretchLastSection(False)
         self.to_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.to_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        # Подключаем обработчик изменений для обновления норм (один раз)
+        self.to_table.itemChanged.connect(self.on_to_norm_changed)
         to_layout.addWidget(self.to_table)
         to_group.setLayout(to_layout)
         layout.addWidget(to_group)
@@ -263,27 +308,41 @@ class PartCreationDialog(QDialog):
     
     def update_from_table(self):
         """Обновить таблицу материалов 'до'"""
+        # Временно блокируем сигналы, чтобы избежать лишних вызовов при обновлении
+        self.from_table.blockSignals(True)
         self.from_table.setRowCount(len(self.from_materials))
         for row, entry in enumerate(self.from_materials):
             self.from_table.setItem(row, 0, QTableWidgetItem(entry.workshop))
             self.from_table.setItem(row, 1, QTableWidgetItem(entry.role))
             self.from_table.setItem(row, 2, QTableWidgetItem(entry.before_name))
             self.from_table.setItem(row, 3, QTableWidgetItem(entry.unit))
+            # Норма - редактируемая ячейка
             norm_item = QTableWidgetItem(f"{entry.norm:.4f}")
             norm_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            norm_item.setData(Qt.UserRole, entry)  # Сохраняем ссылку на entry
             self.from_table.setItem(row, 4, norm_item)
+        
+        # Разблокируем сигналы
+        self.from_table.blockSignals(False)
     
     def update_to_table(self):
         """Обновить таблицу материалов 'после'"""
+        # Временно блокируем сигналы, чтобы избежать лишних вызовов при обновлении
+        self.to_table.blockSignals(True)
         self.to_table.setRowCount(len(self.to_materials))
         for row, entry in enumerate(self.to_materials):
             self.to_table.setItem(row, 0, QTableWidgetItem(entry.workshop))
             self.to_table.setItem(row, 1, QTableWidgetItem(entry.role))
             self.to_table.setItem(row, 2, QTableWidgetItem(entry.before_name))
             self.to_table.setItem(row, 3, QTableWidgetItem(entry.unit))
+            # Норма - редактируемая ячейка
             norm_item = QTableWidgetItem(f"{entry.norm:.4f}")
             norm_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            norm_item.setData(Qt.UserRole, entry)  # Сохраняем ссылку на entry
             self.to_table.setItem(row, 4, norm_item)
+        
+        # Разблокируем сигналы
+        self.to_table.blockSignals(False)
     
     def accept_and_validate(self):
         """Валидация и принятие диалога"""
@@ -371,9 +430,80 @@ class PartCreationDialog(QDialog):
         """Получить созданную запись (для одиночного режима)"""
         return self.entry
     
+    def load_set_for_editing(self):
+        """Загрузить набор для редактирования"""
+        if not self.edit_set_id:
+            return
+        
+        # Получаем набор "to" по ID
+        to_set = self.catalog_loader.get_replacement_set_by_id(self.edit_set_id)
+        if not to_set:
+            return
+        
+        # Находим соответствующий набор "from" для той же детали
+        all_sets = self.catalog_loader.get_replacement_sets_by_part(to_set.part_code)
+        from_set = None
+        for s in all_sets:
+            if s.set_type == 'from' and s.part_code == to_set.part_code:
+                # Берем первый найденный набор "from" (обычно он один)
+                from_set = s
+                break
+        
+        # Заполняем форму
+        self.part_edit_set.setText(to_set.part_code)
+        
+        if from_set:
+            self.edit_from_set_id = from_set.id
+            self.from_materials = from_set.materials.copy()
+            self.update_from_table()
+        
+        self.edit_to_set_id = to_set.id
+        self.to_materials = to_set.materials.copy()
+        self.update_to_table()
+    
     def get_replacement_set_data(self) -> tuple:
         """Получить данные набора замены: (part_code, from_materials, to_materials)"""
         return (self.part_edit_set.text().strip(), self.from_materials, self.to_materials)
+    
+    def get_edit_set_ids(self) -> tuple:
+        """Получить ID наборов для редактирования: (from_set_id, to_set_id)"""
+        return (self.edit_from_set_id, self.edit_to_set_id)
+    
+    def on_from_norm_changed(self, item: QTableWidgetItem):
+        """Обработчик изменения нормы в таблице 'до'"""
+        if item.column() == 4:  # Колонка "Норма"
+            entry = item.data(Qt.UserRole)
+            if entry:
+                try:
+                    new_norm = float(item.text().replace(',', '.'))
+                    if new_norm > 0:
+                        entry.norm = new_norm
+                        # Обновляем форматирование
+                        item.setText(f"{new_norm:.4f}")
+                    else:
+                        # Восстанавливаем старое значение
+                        item.setText(f"{entry.norm:.4f}")
+                except ValueError:
+                    # Восстанавливаем старое значение при ошибке
+                    item.setText(f"{entry.norm:.4f}")
+    
+    def on_to_norm_changed(self, item: QTableWidgetItem):
+        """Обработчик изменения нормы в таблице 'после'"""
+        if item.column() == 4:  # Колонка "Норма"
+            entry = item.data(Qt.UserRole)
+            if entry:
+                try:
+                    new_norm = float(item.text().replace(',', '.'))
+                    if new_norm > 0:
+                        entry.norm = new_norm
+                        # Обновляем форматирование
+                        item.setText(f"{new_norm:.4f}")
+                    else:
+                        # Восстанавливаем старое значение
+                        item.setText(f"{entry.norm:.4f}")
+                except ValueError:
+                    # Восстанавливаем старое значение при ошибке
+                    item.setText(f"{entry.norm:.4f}")
 
 
 class MaterialEntryDialog(QDialog):

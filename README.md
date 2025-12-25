@@ -14,9 +14,26 @@
 ## Установка
 
 1. Установите Python 3.8 или выше
-2. Установите зависимости:
+2. Создайте виртуальное окружение:
 ```bash
-pip install PySide6 openpyxl xlrd
+python3 -m venv venv
+source venv/bin/activate
+```
+3. Установите системные зависимости Qt (требуется sudo):
+```bash
+sudo apt-get update
+sudo apt-get install -y libxcb-cursor0 libxcb-xinerama0 libxcb-xfixes0 \
+    libxcb-render-util0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+    libxcb-randr0 libxcb-render0 libxcb-shape0 libxcb-sync1 libxcb-xkb1 \
+    libxkbcommon-x11-0
+```
+Или используйте скрипт:
+```bash
+./install_dependencies.sh
+```
+4. Установите Python зависимости:
+```bash
+pip install -r requirements.txt
 ```
 
 ## Структура проекта
@@ -43,8 +60,15 @@ OMTS/
 
 ## Запуск
 
+Активируйте виртуальное окружение и запустите:
 ```bash
+source venv/bin/activate
 python main.py
+```
+
+Или используйте скрипт запуска:
+```bash
+./run.sh
 ```
 
 ## Использование

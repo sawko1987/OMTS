@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QLabel, QLineEdit, QCompleter
 )
 from PySide6.QtCore import Qt, QStringListModel, QTimer
+from PySide6.QtGui import QColor
 from typing import List, Optional
 import logging
 
@@ -122,7 +123,7 @@ class ChangesTableWidget(QWidget):
         
         # Таблица
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
             "Деталь",
             "Цех",
@@ -131,7 +132,8 @@ class ChangesTableWidget(QWidget):
             "Ед.изм.",
             "Норма",
             "Меняем",
-            "Материал 'после'"
+            "Материал 'после'",
+            "Страница"
         ])
         
         # Настройка таблицы
@@ -144,6 +146,7 @@ class ChangesTableWidget(QWidget):
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(7, QHeaderView.Stretch)
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
         
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.itemChanged.connect(self.on_item_changed)
@@ -461,7 +464,11 @@ class ChangesTableWidget(QWidget):
                     return
             
             # Создаём изменения для детали с наборами
-            part_changes = PartChanges(part=part)
+            # Получаем текущий номер доп. страницы, если установлен
+            additional_page = None
+            if hasattr(self, 'get_current_additional_page') and callable(self.get_current_additional_page):
+                additional_page = self.get_current_additional_page()
+            part_changes = PartChanges(part=part, additional_page_number=additional_page)
             
             # Получаем материалы из набора "to" для сопоставления
             to_materials = selected_to_set.materials if selected_to_set else []
@@ -494,7 +501,11 @@ class ChangesTableWidget(QWidget):
                 return
             
             # Создаём изменения для детали
-            part_changes = PartChanges(part=part)
+            # Получаем текущий номер доп. страницы, если установлен
+            additional_page = None
+            if hasattr(self, 'get_current_additional_page') and callable(self.get_current_additional_page):
+                additional_page = self.get_current_additional_page()
+            part_changes = PartChanges(part=part, additional_page_number=additional_page)
             for entry in entries:
                 material_change = MaterialChange(catalog_entry=entry)
                 part_changes.materials.append(material_change)
@@ -604,6 +615,30 @@ class ChangesTableWidget(QWidget):
                     after_item = QTableWidgetItem(material.after_name or "")
                     after_item.setData(Qt.UserRole, material)
                     self.table.setItem(row, 7, after_item)
+                
+                # Страница (визуальная индикация)
+                page_label = ""
+                if part_change.additional_page_number is not None:
+                    page_label = f"{part_change.additional_page_number}+"
+                else:
+                    page_label = "1"
+                page_item = QTableWidgetItem(page_label)
+                page_item.setFlags(page_item.flags() & ~Qt.ItemIsEditable)
+                page_item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, 8, page_item)
+                
+                # Визуальное выделение строк для доп. страниц (светло-голубой фон)
+                if part_change.additional_page_number is not None:
+                    light_blue = QColor(173, 216, 230)  # Светло-голубой цвет
+                    for col in range(9):
+                        item = self.table.item(row, col)
+                        if item:
+                            item.setBackground(light_blue)
+                        else:
+                            # Если ячейка содержит виджет (чекбокс, комбобокс), устанавливаем цвет через таблицу
+                            widget = self.table.cellWidget(row, col)
+                            if widget:
+                                widget.setStyleSheet(f"background-color: rgb({light_blue.red()}, {light_blue.green()}, {light_blue.blue()});")
                 
                 row += 1
     
