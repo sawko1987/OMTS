@@ -46,10 +46,17 @@ class SettingsManager:
         """Получить путь к папке сохранения документов"""
         path = self._settings.get("output_directory")
         if path:
-            # Проверяем, что путь существует
-            path_obj = Path(path)
-            if path_obj.exists() and path_obj.is_dir():
+            # Нормализуем путь (преобразуем в Path и обратно в строку)
+            # Это обеспечивает правильную обработку разделителей путей
+            try:
+                path_obj = Path(path)
+                # Возвращаем нормализованный путь, даже если он временно недоступен
+                # (например, сетевой диск не подключен)
+                # Проверка доступности будет выполнена при сохранении документа
                 return str(path_obj)
+            except Exception:
+                # Если путь некорректный, возвращаем как есть
+                return str(path)
         return None
     
     def set_output_directory(self, path: str):

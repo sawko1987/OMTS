@@ -265,6 +265,44 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Предупреждение", 
                                   f"Не удалось сохранить настройки:\n{e}\n\n"
                                   "Папка будет использована только для этого документа.")
+        else:
+            # Проверяем доступность сохраненного пути
+            path_obj = Path(selected_dir)
+            if not path_obj.exists():
+                # Путь не существует - пытаемся создать его
+                try:
+                    path_obj.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    # Не удалось создать - предлагаем выбрать другую папку
+                    reply = QMessageBox.question(
+                        self,
+                        "Папка недоступна",
+                        f"Сохраненная папка недоступна:\n{selected_dir}\n\n"
+                        f"Ошибка: {e}\n\n"
+                        "Выбрать другую папку?",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.Yes:
+                        output_dir = PROJECT_ROOT / "output"
+                        selected_dir = QFileDialog.getExistingDirectory(
+                            self,
+                            "Выберите папку для сохранения извещений",
+                            str(output_dir)
+                        )
+                        if not selected_dir:
+                            return
+                        try:
+                            self.settings_manager.set_output_directory(selected_dir)
+                        except Exception as e2:
+                            QMessageBox.warning(self, "Предупреждение", 
+                                              f"Не удалось сохранить настройки:\n{e2}")
+                    else:
+                        return
+            elif not path_obj.is_dir():
+                # Путь существует, но это не папка
+                QMessageBox.warning(self, "Ошибка", 
+                                  f"Указанный путь не является папкой:\n{selected_dir}")
+                return
         
         # Получаем номер документа заранее (для формирования имени файла)
         # Импортируем здесь, чтобы избежать циклических импортов
@@ -284,7 +322,13 @@ class MainWindow(QMainWindow):
         target_dir = Path(selected_dir) / month_year_folder
         
         # Создаём папку, если её нет
-        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", 
+                               f"Не удалось создать папку для сохранения:\n{target_dir}\n\n"
+                               f"Ошибка: {e}")
+            return
         
         # Получаем название первого материала
         material_name = self.get_first_material_name()
