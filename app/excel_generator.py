@@ -109,6 +109,58 @@ class ExcelGenerator:
         for r in range(start_row, end_row + 1):
             sheet.row_dimensions[r].hidden = hidden
 
+    def _normalize_additional_sheet_layout(self, sheet, base_sheet):
+        """Нормализовать настройки печати/разметки листа под эталонный лист 1+.
+
+        Копируем настройки по полям (attribute-by-attribute), чтобы:
+        - все доп. листы печатались одинаково (масштаб/поля/ориентация/бумага)
+        - не зависеть от состояния/косяков конкретного листа шаблона (2+,3+,...)
+        """
+        # page_setup
+        base_ps = base_sheet.page_setup
+        ps = sheet.page_setup
+        for attr in ("scale", "fitToWidth", "fitToHeight", "orientation", "paperSize"):
+            try:
+                setattr(ps, attr, getattr(base_ps, attr))
+            except Exception:
+                pass
+
+        # page_margins
+        base_pm = base_sheet.page_margins
+        pm = sheet.page_margins
+        for attr in ("left", "right", "top", "bottom", "header", "footer"):
+            try:
+                setattr(pm, attr, getattr(base_pm, attr))
+            except Exception:
+                pass
+
+        # print_options (центровка/сетки/заголовки)
+        base_po = base_sheet.print_options
+        po = sheet.print_options
+        for attr in ("gridLines", "headings", "horizontalCentered", "verticalCentered"):
+            try:
+                setattr(po, attr, getattr(base_po, attr))
+            except Exception:
+                pass
+
+        # Ширины колонок: копируем то, что есть у эталона (обычно A..N)
+        for col_letter, dim in base_sheet.column_dimensions.items():
+            if dim is None:
+                continue
+            try:
+                sheet.column_dimensions[col_letter].width = dim.width
+            except Exception:
+                pass
+
+        logger.debug(
+            f"[add layout] sheet='{sheet.title}' normalized to '{base_sheet.title}': "
+            f"scale={getattr(sheet.page_setup,'scale',None)}, "
+            f"paperSize={getattr(sheet.page_setup,'paperSize',None)}, "
+            f"orientation={getattr(sheet.page_setup,'orientation',None)}, "
+            f"margins={sheet.page_margins.left},{sheet.page_margins.right},"
+            f"{sheet.page_margins.top},{sheet.page_margins.bottom}"
+        )
+
     def _get_main_sheet_bounds(self, sheet) -> Tuple[int, int, int]:
         """Границы таблицы на основном листе: (data_start_row, data_end_row, table_physical_end_row)."""
         header_row = self._find_table_header_row(sheet)
@@ -720,15 +772,28 @@ class ExcelGenerator:
         max_start_page = max(data_by_start_page.keys()) if data_by_start_page else 1
         logger.info(f"Стартовые страницы данных: {sorted(data_by_start_page.keys())}, max={max_start_page}")
 
-        # Лист-образец для копирования
-        template_sheet = wb[additional_sheet_names[0]] if additional_sheet_names else wb[self.config["main_sheet"]]
+        # Эталонный лист для всех доп. страниц: 1+
+        base_sheet = None
+        if "1+" in wb.sheetnames:
+            base_sheet = wb["1+"]
+        elif additional_sheet_names:
+            base_sheet = wb[additional_sheet_names[0]]
+        else:
+            base_sheet = wb[self.config["main_sheet"]]
+
+        logger.info(
+            f"[add pages] base_sheet='{base_sheet.title}' "
+            f"(scale={getattr(base_sheet.page_setup,'scale',None)}, "
+            f"margins={base_sheet.page_margins.left},{base_sheet.page_margins.right},"
+            f"{base_sheet.page_margins.top},{base_sheet.page_margins.bottom})"
+        )
 
         def ensure_additional_sheet(page_num: int) -> str:
             """Гарантирует наличие листа '{page_num}+' и возвращает его имя."""
             name = f"{page_num}+"
             if name in wb.sheetnames:
                 return name
-            new_sheet = wb.copy_worksheet(template_sheet)
+            new_sheet = wb.copy_worksheet(base_sheet)
             new_sheet.title = name
             logger.info(f"Создан новый лист: {name}")
             return name
@@ -751,6 +816,8 @@ class ExcelGenerator:
 
             sheet_name = ensure_additional_sheet(page_num)
             sheet = wb[sheet_name]
+            # Приводим настройки печати/разметки листа к эталону 1+
+            self._normalize_additional_sheet_layout(sheet, base_sheet)
             logger.info(f"Обработка страницы {page_num}+ (лист '{sheet_name}'), деталей к попытке записи: {len(parts_for_page)}")
 
             # Ограничиваем лист одной страницей печати: скрываем всё ниже data_end_row.
