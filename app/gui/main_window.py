@@ -13,7 +13,10 @@ import re
 from app.models import DocumentData
 from app.gui.document_info_widget import DocumentInfoWidget
 from app.gui.changes_table_widget import ChangesTableWidget
+from app.gui.replacement_sets_editor_widget import ReplacementSetsEditorWidget
 from app.gui.settings_dialog import SettingsDialog
+from app.gui.product_parts_binding_dialog import ProductPartsBindingDialog
+from app.gui.database_restore_dialog import DatabaseRestoreDialog
 from app.config import PROJECT_ROOT, DATABASE_PATH
 from app.database import DatabaseManager
 from app.product_store import ProductStore
@@ -22,6 +25,7 @@ from app.history_store import HistoryStore
 from app.migrate_to_sqlite import migrate_all
 from app.settings_manager import SettingsManager
 from app.document_store import DocumentStore
+from app.parsing_importer import import_parsing_file
 
 class MainWindow(QMainWindow):
     """Главное окно приложения"""
@@ -77,6 +81,16 @@ class MainWindow(QMainWindow):
         open_doc_action = document_menu.addAction("Открыть документ...")
         open_doc_action.triggered.connect(self.open_document)
         
+        # Меню "Данные"
+        data_menu = menubar.addMenu("Данные")
+        import_parsing_action = data_menu.addAction("Импорт пакетов из Парсинг.xlsx...")
+        import_parsing_action.triggered.connect(self.import_parsing_file)
+        binding_action = data_menu.addAction("Привязки деталей к изделиям...")
+        binding_action.triggered.connect(self.show_product_parts_binding)
+        data_menu.addSeparator()
+        restore_action = data_menu.addAction("Восстановить базу данных...")
+        restore_action.triggered.connect(self.show_database_restore)
+        
         settings_menu = menubar.addMenu("Настройки")
         settings_action = settings_menu.addAction("Настройки...")
         settings_action.triggered.connect(self.show_settings)
@@ -94,7 +108,6 @@ class MainWindow(QMainWindow):
         
         # Вкладка 1: Реквизиты документа
         self.doc_info_widget = DocumentInfoWidget(self.document_data, self.product_store, self.db_manager)
-        self.doc_info_widget.product_changed.connect(self.on_product_changed)
         self.tabs.addTab(self.doc_info_widget, "Реквизиты документа")
         
         # Вкладка 2: Таблица изменений
@@ -107,6 +120,20 @@ class MainWindow(QMainWindow):
         # Передаём функцию для получения текущего номера доп. страницы
         self.changes_widget.get_current_additional_page = lambda: self.current_additional_page
         self.tabs.addTab(self.changes_widget, "Изменения материалов")
+
+        # Вкладка 3: Наборы
+        self.replacement_sets_widget = ReplacementSetsEditorWidget(
+            self.catalog_loader,
+            document_data=self.document_data,
+            history_store=self.history_store,
+            product_store=self.product_store,
+            get_current_additional_page=lambda: self.current_additional_page,
+            changes_widget=self.changes_widget
+        )
+        self.tabs.addTab(self.replacement_sets_widget, "Наборы")
+
+        # Синхронизация выбора детали: вкладка «Изменения материалов» -> «Наборы»
+        self.changes_widget.part_selected.connect(self.replacement_sets_widget.set_part)
         
         # Кнопки внизу
         button_layout = QHBoxLayout()
@@ -132,6 +159,12 @@ class MainWindow(QMainWindow):
         try:
             self.catalog_loader.load()
             self.changes_widget.load_catalog()
+            self.replacement_sets_widget.load_catalog()
+
+            # Подхватываем текущую деталь из комбобокса (если есть)
+            current_part = self.changes_widget.part_combo.currentText().strip()
+            if current_part:
+                self.replacement_sets_widget.set_part(current_part)
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить справочник:\n{e}")
     
@@ -143,19 +176,123 @@ class MainWindow(QMainWindow):
             # Обновляем номер документа, если он был изменен
             self.doc_info_widget.refresh_number()
     
-    def on_product_changed(self, product_name: str):
-        """Обработка изменения изделия"""
-        # Обновляем данные документа
-        self.document_data.product = product_name
-        # Обновляем список деталей на второй вкладке
-        self.changes_widget.update_product_filter()
+    def import_parsing_file(self):
+        """Импортировать данные из Парсинг.xlsx"""
+        # Запрашиваем файл
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл Парсинг.xlsx",
+            str(PROJECT_ROOT),
+            "Excel файлы (*.xlsx);;Все файлы (*)"
+        )
+        
+        if not file_path:
+            return
+        
+        file_path_obj = Path(file_path)
+        
+        # Подтверждение
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение импорта",
+            f"Импортировать данные из файла:\n{file_path_obj.name}\n\n"
+            "Это создаст наборы материалов для деталей из файла и привяжет их ко всем изделиям.\n"
+            "Перед импортом будет создана резервная копия базы данных.\n\n"
+            "Продолжить?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        # Выполняем импорт
+        try:
+            imported_parts, created_sets, errors = import_parsing_file(
+                file_path=file_path_obj,
+                catalog_loader=self.catalog_loader,
+                product_store=self.product_store,
+                db_manager=self.db_manager
+            )
+            
+            # Обновляем каталог в интерфейсе
+            self.load_catalog()
+            
+            # Принудительно обновляем список деталей в виджете изменений
+            self.changes_widget.load_parts_list()
+            
+            # Проверяем, сколько деталей действительно в БД
+            all_parts_after = self.catalog_loader.get_all_parts()
+            
+            # Показываем результат
+            message = (
+                f"Импорт завершён!\n\n"
+                f"Успешно импортировано деталей: {imported_parts}\n"
+                f"Создано наборов: {created_sets}\n"
+                f"Всего деталей в БД: {len(all_parts_after)}"
+            )
+            
+            if errors:
+                message += f"\n\nОшибок при импорте: {len(errors)}"
+                for error in errors[:5]:  # Показываем первые 5 ошибок
+                    message += f"\n  - {error}"
+                if len(errors) > 5:
+                    message += f"\n  ... и ещё {len(errors) - 5} ошибок"
+            
+            QMessageBox.information(self, "Импорт завершён", message)
+        
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка импорта",
+                f"Произошла ошибка при импорте:\n{e}"
+            )
+    
+    def show_product_parts_binding(self):
+        """Показать диалог управления привязками деталей к изделиям"""
+        dialog = ProductPartsBindingDialog(
+            self.product_store,
+            self.catalog_loader,
+            self
+        )
+        dialog.exec()
+        
+        # Обновляем каталог, так как могли измениться привязки
+        self.load_catalog()
+    
+    def show_database_restore(self):
+        """Показать диалог восстановления базы данных"""
+        reply = QMessageBox.warning(
+            self,
+            "Восстановление базы данных",
+            "Восстановление базы данных из резервной копии приведёт к потере всех изменений, "
+            "сделанных после создания резервной копии.\n\n"
+            "Текущая БД будет сохранена перед восстановлением.\n\n"
+            "После восстановления необходимо перезапустить приложение.\n\n"
+            "Продолжить?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        dialog = DatabaseRestoreDialog(self)
+        if dialog.exec():
+            # Если восстановление прошло успешно, показываем сообщение о перезапуске
+            QMessageBox.warning(
+                self,
+                "Перезапуск необходим",
+                "База данных восстановлена.\n\n"
+                "⚠ ВАЖНО: Закройте приложение и запустите его снова для применения изменений."
+            )
     
     def get_first_material_name(self) -> str:
         """Получить название первого заменяемого материала"""
         for part_change in self.document_data.part_changes:
             for material in part_change.materials:
-                if material.is_changed and material.after_name and material.after_name.strip():
-                    return material.after_name.strip()
+                if material.is_changed and material.catalog_entry.before_name and material.catalog_entry.before_name.strip():
+                    return material.catalog_entry.before_name.strip()
         return "материал"
     
     def get_month_year_folder(self) -> str:
@@ -350,16 +487,73 @@ class MainWindow(QMainWindow):
             
             QMessageBox.information(self, "Успех", f"Документ успешно создан:\n{file_path}")
             
+            # Автоматически открываем файл, если настройка включена
+            if self.settings_manager.get_open_after_generate():
+                try:
+                    import os
+                    os.startfile(str(file_path))
+                except Exception as e:
+                    # Если не удалось открыть, просто логируем, но не показываем ошибку пользователю
+                    import logging
+                    logging.warning(f"Не удалось автоматически открыть файл: {e}")
+            
             # Создаём новый документ с новым номером
             self.new_document()
             
+        except PermissionError as e:
+            # Специальная обработка ошибок доступа
+            error_msg = str(e)
+            if "открыт" in error_msg.lower() or "open" in error_msg.lower():
+                QMessageBox.critical(
+                    self, 
+                    "Ошибка доступа", 
+                    f"Не удалось создать документ:\n\n{error_msg}\n\n"
+                    f"Действия:\n"
+                    f"1. Закройте файл в Excel, если он открыт\n"
+                    f"2. Проверьте, не открыт ли файл в другой программе\n"
+                    f"3. Попробуйте сохранить документ снова"
+                )
+            else:
+                QMessageBox.critical(
+                    self, 
+                    "Ошибка доступа", 
+                    f"Не удалось создать документ:\n\n{error_msg}\n\n"
+                    f"Проверьте права доступа к папке:\n{target_dir}"
+                )
+        except FileNotFoundError as e:
+            QMessageBox.critical(
+                self, 
+                "Ошибка", 
+                f"Не удалось создать документ:\n\n{str(e)}\n\n"
+                f"Проверьте, что все необходимые файлы и папки существуют."
+            )
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось создать документ:\n{e}")
+            # Общая обработка других ошибок
+            error_msg = str(e)
+            if "Permission denied" in error_msg or "Errno 13" in error_msg:
+                QMessageBox.critical(
+                    self, 
+                    "Ошибка доступа", 
+                    f"Не удалось создать документ:\n\n"
+                    f"Ошибка доступа к файлу: {file_path}\n\n"
+                    f"Возможные причины:\n"
+                    f"1. Файл открыт в Excel или другой программе\n"
+                    f"2. Нет прав на запись в папку\n"
+                    f"3. Сетевая папка недоступна\n\n"
+                    f"Детали ошибки: {error_msg}"
+                )
+            else:
+                QMessageBox.critical(
+                    self, 
+                    "Ошибка", 
+                    f"Не удалось создать документ:\n\n{error_msg}\n\n"
+                    f"Путь: {file_path}"
+                )
     
     def new_document(self):
         """Создать новый документ"""
         # Проверяем, есть ли несохранённые изменения
-        if self.document_data.part_changes or self.document_data.product:
+        if self.document_data.part_changes or self.document_data.products:
             reply = QMessageBox.question(
                 self,
                 "Подтверждение",
