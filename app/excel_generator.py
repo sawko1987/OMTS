@@ -616,15 +616,20 @@ class ExcelGenerator:
             # Пропускаем данные для доп. страниц - они обрабатываются отдельно
             if part_change.additional_page_number is not None:
                 # Проверяем, есть ли изменения для этой детали перед добавлением
-                changed_materials = [m for m in part_change.materials if m.is_changed and m.after_name]
-                if changed_materials:
+                before_materials = [m for m in part_change.materials if m.is_changed]
+                after_materials = [m for m in part_change.materials if m.after_name and m.after_name.strip()]
+                if before_materials or after_materials:
                     logger.debug(f"Деталь '{part_change.part}' помечена для доп. страницы {part_change.additional_page_number}, пропускаем на первой странице")
                     remaining_data.append(part_change)
                 continue
             
+            # Разделяем материалы на "до" и "после" независимо
+            before_materials = [m for m in part_change.materials if m.is_changed]
+            after_materials = [m for m in part_change.materials if m.after_name and m.after_name.strip()]
+            max_rows = max(len(before_materials), len(after_materials))
+            
             # Проверяем, есть ли изменения для этой детали
-            changed_materials = [m for m in part_change.materials if m.is_changed and m.after_name]
-            if not changed_materials:
+            if not before_materials and not after_materials:
                 logger.debug(f"Деталь '{part_change.part}' не имеет изменённых материалов, пропускаем")
                 continue
 
@@ -634,11 +639,11 @@ class ExcelGenerator:
                 continue
             
             # ВАЖНО: Проверяем, поместится ли деталь с её материалами ДО записи
-            # Деталь занимает 1 строку (название детали) + количество материалов
-            rows_needed = 1 + len(changed_materials)
+            # Деталь занимает 1 строку (название детали) + максимальное количество материалов
+            rows_needed = 1 + max_rows
             rows_available = data_end_row - current_row + 1
             
-            logger.debug(f"Деталь '{part_change.part}': требуется строк {rows_needed}, доступно {rows_available}, текущая строка {current_row}")
+            logger.debug(f"Деталь '{part_change.part}': требуется строк {rows_needed} (материалов 'до': {len(before_materials)}, 'после': {len(after_materials)}), доступно {rows_available}, текущая строка {current_row}")
             
             # Если не помещается полностью, переносим на доп. страницу
             if rows_needed > rows_available:
@@ -663,8 +668,8 @@ class ExcelGenerator:
             current_row += 1
             parts_written += 1
             
-            # Записываем материалы для этой детали
-            for material in changed_materials:
+            # Записываем материалы для этой детали независимо в левой и правой колонках
+            for i in range(max_rows):
                 # Дополнительная проверка на случай, если что-то пошло не так
                 if current_row > data_end_row:
                     logger.warning(
@@ -675,40 +680,51 @@ class ExcelGenerator:
                     if not current_part_data:
                         current_part_data = PartChanges(part=part_change.part)
                         remaining_data.append(current_part_data)
-                    current_part_data.materials.append(material)
+                    # Добавляем оставшиеся материалы "до"
+                    if i < len(before_materials):
+                        current_part_data.materials.append(before_materials[i])
+                    # Добавляем оставшиеся материалы "после"
+                    if i < len(after_materials):
+                        current_part_data.materials.append(after_materials[i])
                     continue
                 
                 # Левая часть: "Подлежит изменению"
-                # Колонка A: Наименование материала "до"
-                cell = get_merged_cell_value(sheet, current_row, 1)
-                cell.value = material.catalog_entry.before_name
-                
-                # Колонка D (4): Ед. изм. "до"
-                cell = get_merged_cell_value(sheet, current_row, 4)
-                cell.value = material.catalog_entry.unit
-                
-                # Колонка E (5): Норма "до"
-                cell = get_merged_cell_value(sheet, current_row, 5)
-                cell.value = material.catalog_entry.norm
-                # Сохраняем формат числа, если он был в шаблоне
-                # Не устанавливаем новый формат, чтобы не перезаписать существующий
+                if i < len(before_materials):
+                    material = before_materials[i]
+                    # Колонка A: Наименование материала "до"
+                    cell = get_merged_cell_value(sheet, current_row, 1)
+                    cell.value = material.catalog_entry.before_name
+                    
+                    # Колонка D (4): Ед. изм. "до"
+                    cell = get_merged_cell_value(sheet, current_row, 4)
+                    cell.value = material.catalog_entry.unit
+                    
+                    # Колонка E (5): Норма "до"
+                    cell = get_merged_cell_value(sheet, current_row, 5)
+                    cell.value = material.catalog_entry.norm
+                    # ВАЖНО: фиксируем формат нормы (3 знака после запятой),
+                    # чтобы отображение не зависело от шаблона.
+                    cell.number_format = "0.000"
                 
                 # Правая часть: "Вносимые изменения"
-                # Колонка G (7): Наименование материала "после"
-                cell = get_merged_cell_value(sheet, current_row, 7)
-                cell.value = material.after_name
-                
-                # Колонка I (9): Ед. изм. "после"
-                cell = get_merged_cell_value(sheet, current_row, 9)
-                if material.after_unit:
-                    cell.value = material.after_unit
-                else:
-                    cell.value = material.catalog_entry.unit
-                
-                # Колонка J (10): Норма "после" (если указана)
-                if material.after_norm is not None:
-                    cell = get_merged_cell_value(sheet, current_row, 10)
-                    cell.value = material.after_norm
+                if i < len(after_materials):
+                    material = after_materials[i]
+                    # Колонка G (7): Наименование материала "после"
+                    cell = get_merged_cell_value(sheet, current_row, 7)
+                    cell.value = material.after_name
+                    
+                    # Колонка I (9): Ед. изм. "после"
+                    cell = get_merged_cell_value(sheet, current_row, 9)
+                    if material.after_unit:
+                        cell.value = material.after_unit
+                    else:
+                        cell.value = material.catalog_entry.unit
+                    
+                    # Колонка J (10): Норма "после" (если указана)
+                    if material.after_norm is not None:
+                        cell = get_merged_cell_value(sheet, current_row, 10)
+                        cell.value = material.after_norm
+                        cell.number_format = "0.000"
                 
                 current_row += 1
                 materials_written += 1
@@ -732,8 +748,9 @@ class ExcelGenerator:
         # Фильтруем данные: оставляем только детали с изменёнными материалами
         filtered_remaining_data = []
         for part_change in remaining_data:
-            changed_materials = [m for m in part_change.materials if m.is_changed and m.after_name]
-            if changed_materials:
+            before_materials = [m for m in part_change.materials if m.is_changed]
+            after_materials = [m for m in part_change.materials if m.after_name and m.after_name.strip()]
+            if before_materials or after_materials:
                 filtered_remaining_data.append(part_change)
             else:
                 logger.debug(f"Деталь '{part_change.part}' отфильтрована (нет изменённых материалов)")
@@ -836,11 +853,15 @@ class ExcelGenerator:
             materials_on_page = 0
 
             for i, part_change in enumerate(parts_for_page):
-                changed_materials = [m for m in part_change.materials if m.is_changed and m.after_name]
-                if not changed_materials:
+                # Разделяем материалы на "до" и "после" независимо
+                before_materials = [m for m in part_change.materials if m.is_changed]
+                after_materials = [m for m in part_change.materials if m.after_name and m.after_name.strip()]
+                max_rows = max(len(before_materials), len(after_materials))
+                
+                if not before_materials and not after_materials:
                     continue
 
-                rows_needed = 1 + len(changed_materials)
+                rows_needed = 1 + max_rows
                 rows_available = data_end_row - current_row + 1
 
                 if rows_needed > rows_available:
@@ -853,7 +874,7 @@ class ExcelGenerator:
                     )
                     break
 
-                logger.debug(f"Запись детали '{part_change.part}' на страницу {page_num}+, строка {current_row}")
+                logger.debug(f"Запись детали '{part_change.part}' на страницу {page_num}+, строка {current_row} (материалов 'до': {len(before_materials)}, 'после': {len(after_materials)})")
 
                 # Записываем деталь
                 cell = get_merged_cell_value(sheet, current_row, 1)
@@ -863,24 +884,30 @@ class ExcelGenerator:
                 current_row += 1
                 parts_on_page += 1
 
-                # Записываем материалы
-                for material in changed_materials:
+                # Записываем материалы независимо в левой и правой колонках
+                for j in range(max_rows):
                     # Левая часть
-                    cell = get_merged_cell_value(sheet, current_row, 1)
-                    cell.value = material.catalog_entry.before_name
-                    cell = get_merged_cell_value(sheet, current_row, 4)
-                    cell.value = material.catalog_entry.unit
-                    cell = get_merged_cell_value(sheet, current_row, 5)
-                    cell.value = material.catalog_entry.norm
+                    if j < len(before_materials):
+                        material = before_materials[j]
+                        cell = get_merged_cell_value(sheet, current_row, 1)
+                        cell.value = material.catalog_entry.before_name
+                        cell = get_merged_cell_value(sheet, current_row, 4)
+                        cell.value = material.catalog_entry.unit
+                        cell = get_merged_cell_value(sheet, current_row, 5)
+                        cell.value = material.catalog_entry.norm
+                        cell.number_format = "0.000"
 
                     # Правая часть
-                    cell = get_merged_cell_value(sheet, current_row, 7)
-                    cell.value = material.after_name
-                    cell = get_merged_cell_value(sheet, current_row, 9)
-                    cell.value = material.after_unit if material.after_unit else material.catalog_entry.unit
-                    if material.after_norm is not None:
-                        cell = get_merged_cell_value(sheet, current_row, 10)
-                        cell.value = material.after_norm
+                    if j < len(after_materials):
+                        material = after_materials[j]
+                        cell = get_merged_cell_value(sheet, current_row, 7)
+                        cell.value = material.after_name
+                        cell = get_merged_cell_value(sheet, current_row, 9)
+                        cell.value = material.after_unit if material.after_unit else material.catalog_entry.unit
+                        if material.after_norm is not None:
+                            cell = get_merged_cell_value(sheet, current_row, 10)
+                            cell.value = material.after_norm
+                            cell.number_format = "0.000"
 
                     current_row += 1
                     materials_on_page += 1
