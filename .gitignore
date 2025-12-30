@@ -37,9 +37,9 @@ ENV/
 Thumbs.db
 
 # Project specific
-data/*.db
-data/*.json
-output/*
+# data/*.db - включено в репозиторий
+# data/*.json - включено в репозиторий
+# output/* - включено в репозиторий
 !output/.gitkeep
 
 # Excel temporary files

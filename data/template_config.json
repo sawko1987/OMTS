@@ -1,0 +1,57 @@
+{
+  "template_path": "C:\\OMTS\\templates\\Izveshchenie_template.xlsx",
+  "main_sheet": "Лист1 (3)",
+  "findings": {
+    "document_number": null,
+    "document_date": null,
+    "implementation_date": null,
+    "validity_period": null,
+    "product": {
+      "row": 10,
+      "col": 2,
+      "coord": "B10"
+    },
+    "reason": {
+      "row": 11,
+      "col": 2,
+      "coord": "B11"
+    },
+    "tko_conclusion": {
+      "row": 10,
+      "col": 9,
+      "coord": "I10"
+    },
+    "vruhcheno_marks": {
+      "ПДО": [
+        7,
+        2,
+        "B7"
+      ],
+      "Кладовая ПДО": [
+        7,
+        2,
+        "B7"
+      ],
+      "ТКО": [
+        7,
+        8,
+        "H7"
+      ]
+    },
+    "table_start": 13,
+    "table_headers": {
+      "1": [
+        "Подлежит изменению в деталях (узлах)",
+        "A13"
+      ],
+      "7": [
+        "Вносимые изменения в деталях (узлах)",
+        "G13"
+      ],
+      "13": [
+        "Изменение",
+        "M13"
+      ]
+    }
+  }
+}
