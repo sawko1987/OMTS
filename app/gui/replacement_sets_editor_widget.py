@@ -154,7 +154,7 @@ class ReplacementSetsEditorWidget(QWidget):
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Например: ПЗУ (часть 1)")
         self.name_edit.textEdited.connect(self._on_name_edited)
-        meta.addWidget(self.name_edit, 1)
+        meta.addWidget(self.name_edit, 0.5)
 
         self.btn_revert = QPushButton("Отменить изменения")
         self.btn_revert.clicked.connect(self._revert_loaded)
@@ -163,6 +163,10 @@ class ReplacementSetsEditorWidget(QWidget):
         self.btn_save = QPushButton("Сохранить")
         self.btn_save.clicked.connect(self._save_current)
         meta.addWidget(self.btn_save)
+
+        self.btn_save_and_add = QPushButton("Сохранить и добавить")
+        self.btn_save_and_add.clicked.connect(self._save_and_add_to_document)
+        meta.addWidget(self.btn_save_and_add)
         right_layout.addLayout(meta)
 
         # Таблица "до"
@@ -340,6 +344,7 @@ class ReplacementSetsEditorWidget(QWidget):
             self.name_edit,
             self.btn_revert,
             self.btn_save,
+            self.btn_save_and_add,
             self.btn_from_add_new,
             self.btn_from_add_catalog,
             self.btn_from_remove,
@@ -354,6 +359,9 @@ class ReplacementSetsEditorWidget(QWidget):
         # Кнопка "Добавить деталь" доступна только если есть document_data и выбрана деталь
         if hasattr(self, 'btn_add_to_document'):
             self.btn_add_to_document.setEnabled(enabled and self.document_data is not None and self._current_part is not None)
+        # Кнопка "Сохранить и добавить" доступна только если есть document_data и выбрана деталь
+        if hasattr(self, 'btn_save_and_add'):
+            self.btn_save_and_add.setEnabled(enabled and self.document_data is not None and self._current_part is not None)
 
     def _on_pair_selected(self) -> None:
         row = self.sets_table.currentRow()
@@ -648,45 +656,54 @@ class ReplacementSetsEditorWidget(QWidget):
             return
         self.refresh()
 
-    def _save_current(self) -> None:
+    def _save_current(self, silent: bool = False) -> bool:
+        """Сохранить текущий набор материалов.
+        
+        Args:
+            silent: Если True, не показывать сообщения об успехе (только об ошибках)
+            
+        Returns:
+            True если сохранение успешно, False в противном случае
+        """
         if not self._current_to_set_id or not self._loaded_to_set_id:
-            return
+            return False
 
         # 1) Сохраняем имя пары всегда (если меняли)
         name_text = self.name_edit.text().strip()
         name = name_text or None
 
         if self._dirty_name:
-            if not name:
+            if not name and not silent:
                 QMessageBox.information(self, "Подсказка", "Название очищено — набор будет без имени.")
             self.catalog_loader.update_set_name_for_pair(self._current_to_set_id, name)
 
         # 2) Если материалы не меняли — на этом всё (переименование не должно требовать валидации материалов)
         if not self._dirty_materials:
-            QMessageBox.information(self, "Успех", "Изменения сохранены")
+            if not silent:
+                QMessageBox.information(self, "Успех", "Изменения сохранены")
             self.refresh()
-            return
+            return True
 
         # 3) Валидация материалов (только если редактировали материалы)
         if not self._from_materials:
             QMessageBox.warning(self, "Ошибка", "Добавьте хотя бы один материал в набор 'до'")
-            return
+            return False
         if not self._to_materials:
             QMessageBox.warning(self, "Ошибка", "Добавьте хотя бы один материал в набор 'после'")
-            return
+            return False
 
         for i, m in enumerate(self._from_materials, start=1):
             if not (m.before_name or "").strip() or not (m.unit or "").strip():
                 QMessageBox.warning(self, "Ошибка", f"В наборе 'до' материал #{i}: заполните Наименование и Ед. изм.")
-                return
+                return False
             if (m.norm or 0) <= 0:
                 QMessageBox.warning(self, "Ошибка", f"В наборе 'до' материал #{i}: Норма должна быть больше 0")
-                return
+                return False
 
         for i, m in enumerate(self._to_materials, start=1):
             if not (m.before_name or "").strip() or not (m.unit or "").strip():
                 QMessageBox.warning(self, "Ошибка", f"В наборе 'после' материал #{i}: заполните Наименование и Ед. изм.")
-                return
+                return False
 
         # 4) Сохраняем материалы
         ok = True
@@ -696,9 +713,175 @@ class ReplacementSetsEditorWidget(QWidget):
 
         if not ok:
             QMessageBox.warning(self, "Ошибка", "Не удалось сохранить изменения")
-            return
-        QMessageBox.information(self, "Успех", "Набор сохранён")
+            return False
+        if not silent:
+            QMessageBox.information(self, "Успех", "Набор сохранён")
         self.refresh()
+        return True
+
+    def _save_and_add_to_document(self) -> None:
+        """Сохранить набор материалов и сразу добавить деталь в документ"""
+        # Сохраняем набор (без показа сообщения об успехе, так как покажем общее сообщение)
+        if not self._save_current(silent=True):
+            # Если сохранение не удалось, сообщение об ошибке уже показано в _save_current
+            return
+
+        # После успешного сохранения добавляем деталь в документ
+        # Используем существующий метод _add_part_to_document, но без показа его сообщения об успехе
+        # Вместо этого покажем общее сообщение
+        if not self.document_data:
+            QMessageBox.warning(self, "Ошибка", "Документ не инициализирован")
+            return
+
+        part = self._current_part
+        if not part:
+            QMessageBox.warning(self, "Ошибка", "Выберите деталь")
+            return
+
+        # Проверяем, не добавлена ли уже эта деталь
+        for part_change in self.document_data.part_changes:
+            if part_change.part == part:
+                materials_count = len(part_change.materials)
+                QMessageBox.information(
+                    self,
+                    "Информация",
+                    f"Набор сохранён, но деталь '{part}' уже добавлена в документ ({materials_count} материалов)",
+                )
+                return
+
+        # Вызываем логику добавления из _add_part_to_document, но без показа сообщения
+        # Создаем временный флаг для подавления сообщения
+        replacement_sets = self.catalog_loader.get_replacement_sets_by_part(part)
+
+        if replacement_sets:
+            # Есть наборы замены - используем их
+            from_sets = [s for s in replacement_sets if s.set_type == "from"]
+            to_sets = [s for s in replacement_sets if s.set_type == "to"]
+
+            # Выбираем набор "to"
+            selected_to_set: Optional[MaterialReplacementSet] = None
+            if len(to_sets) == 1:
+                # Один набор - используем автоматически
+                selected_to_set = to_sets[0]
+            elif len(to_sets) > 1:
+                # Несколько наборов - показываем диалог выбора
+                dialog = ReplacementSetSelectionDialog(
+                    to_sets, part, self, catalog_loader=self.catalog_loader
+                )
+                if dialog.exec():
+                    selected_to_set = dialog.get_selected_set()
+                else:
+                    # Пользователь отменил выбор
+                    return
+
+            # Выбираем ОДИН набор "from", соответствующий выбранному "to"
+            selected_from_set = self._pick_matching_from_set(from_sets, selected_to_set)
+            if selected_from_set is None:
+                QMessageBox.warning(
+                    self, "Ошибка", f"Для детали '{part}' не найден набор материалов 'до'"
+                )
+                return
+
+            from_materials = self._deduplicate_materials(selected_from_set.materials or [])
+
+            # Создаём изменения для детали с наборами
+            additional_page = None
+            if (
+                self.get_current_additional_page
+                and callable(self.get_current_additional_page)
+            ):
+                additional_page = self.get_current_additional_page()
+            part_changes = PartChanges(part=part, additional_page_number=additional_page)
+
+            to_materials = selected_to_set.materials if selected_to_set else []
+            added_materials_keys = set()
+
+            for idx, from_entry in enumerate(from_materials):
+                material_key = (from_entry.workshop, from_entry.role, from_entry.before_name)
+                if material_key in added_materials_keys:
+                    continue
+
+                added_materials_keys.add(material_key)
+                material_change = MaterialChange(catalog_entry=from_entry, is_changed=True)
+
+                if idx < len(to_materials):
+                    to_entry = to_materials[idx]
+                    material_change.after_name = to_entry.before_name
+                    if to_entry.unit != from_entry.unit:
+                        material_change.after_unit = to_entry.unit
+                    if to_entry.norm > 0 and to_entry.norm != from_entry.norm:
+                        material_change.after_norm = to_entry.norm
+
+                part_changes.materials.append(material_change)
+
+            if len(to_materials) > len(from_materials):
+                if from_materials:
+                    template_entry = from_materials[-1]
+                else:
+                    template_entry = CatalogEntry(
+                        part=part,
+                        workshop="",
+                        role="",
+                        before_name="",
+                        unit="",
+                        norm=0.0,
+                        comment="",
+                    )
+
+                for idx in range(len(from_materials), len(to_materials)):
+                    to_entry = to_materials[idx]
+                    dummy_entry = CatalogEntry(
+                        part=template_entry.part,
+                        workshop=template_entry.workshop,
+                        role=template_entry.role,
+                        before_name="",
+                        unit=template_entry.unit,
+                        norm=0.0,
+                        comment="",
+                    )
+                    material_change = MaterialChange(
+                        catalog_entry=dummy_entry,
+                        is_changed=False,
+                        after_name=to_entry.before_name,
+                        after_unit=to_entry.unit if to_entry.unit else template_entry.unit,
+                        after_norm=to_entry.norm if to_entry.norm > 0 else None,
+                    )
+                    part_changes.materials.append(material_change)
+
+            self.document_data.part_changes.append(part_changes)
+        else:
+            # Нет наборов - используем старую логику
+            entries = self.catalog_loader.get_entries_by_part(part)
+            if not entries:
+                QMessageBox.warning(self, "Ошибка", f"Деталь '{part}' не найдена в справочнике")
+                return
+
+            entries = [e for e in entries if not e.is_part_of_set]
+            entries = self._deduplicate_materials(entries)
+
+            additional_page = None
+            if (
+                self.get_current_additional_page
+                and callable(self.get_current_additional_page)
+            ):
+                additional_page = self.get_current_additional_page()
+            part_changes = PartChanges(part=part, additional_page_number=additional_page)
+            for entry in entries:
+                material_change = MaterialChange(catalog_entry=entry)
+                part_changes.materials.append(material_change)
+
+            self.document_data.part_changes.append(part_changes)
+
+        # Автоматически привязываем деталь к изделию, если изделие выбрано
+        self._link_part_to_product(part)
+
+        # Обновляем таблицу во второй вкладке
+        if self.changes_widget:
+            self.changes_widget.refresh()
+
+        QMessageBox.information(
+            self, "Успех", f"Набор сохранён и деталь '{part}' добавлена в документ"
+        )
 
     def _split_copy(self) -> None:
         if not self._current_to_set_id:
@@ -733,12 +916,13 @@ class ReplacementSetsEditorWidget(QWidget):
                 break
 
     def _deduplicate_materials(self, materials: list[CatalogEntry]) -> list[CatalogEntry]:
-        """Дедупликация материалов по уникальному ключу (workshop, role, before_name)"""
+        """Дедупликация материалов по уникальному ключу (workshop, role, before_name, unit)"""
         seen = set()
         unique_materials = []
         for material in materials:
-            # Создаем уникальный ключ из workshop, role и before_name
-            key = (material.workshop, material.role, material.before_name)
+            # Создаем уникальный ключ из workshop, role, before_name и unit
+            # Материалы с одинаковым названием, но разными единицами измерения считаются разными
+            key = (material.workshop, material.role, material.before_name, material.unit)
             if key not in seen:
                 seen.add(key)
                 unique_materials.append(material)

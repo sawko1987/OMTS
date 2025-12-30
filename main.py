@@ -32,6 +32,7 @@ def setup_logging():
     logging.getLogger('app.catalog_loader').setLevel(logging.INFO)
     logging.getLogger('app.gui').setLevel(logging.INFO)
     logging.getLogger('app.gui.changes_table_widget').setLevel(logging.INFO)
+    logging.getLogger('app.excel_generator').setLevel(logging.INFO)
     
     logger = logging.getLogger(__name__)
     logger.info("Логирование инициализировано")

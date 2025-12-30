@@ -155,3 +155,33 @@ class NumberingManager:
         current_year = date.today().year
         data = {"year": current_year, "last": number - 1}
         self._save_json(data)
+    
+    def mark_number_as_used(self, number: int):
+        """Пометить номер как использованный (сохранить как последний использованный номер)"""
+        current_year = date.today().year
+        
+        if self._use_db:
+            try:
+                with self.db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE numbering SET last_number = ? WHERE year = ?",
+                        (number, current_year)
+                    )
+                    if cursor.rowcount == 0:
+                        cursor.execute(
+                            "INSERT INTO numbering (year, last_number) VALUES (?, ?)",
+                            (current_year, number)
+                        )
+                    conn.commit()
+            except Exception:
+                self._use_db = False
+                self._mark_number_as_used_json(number)
+        else:
+            self._mark_number_as_used_json(number)
+    
+    def _mark_number_as_used_json(self, number: int):
+        """Пометить номер как использованный в JSON"""
+        current_year = date.today().year
+        data = {"year": current_year, "last": number}
+        self._save_json(data)

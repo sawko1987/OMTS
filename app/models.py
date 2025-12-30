@@ -42,7 +42,7 @@ class DocumentData:
     document_number: Optional[int] = None  # Номер извещения (автоматически)
     implementation_date: Optional[date] = None  # Дата внедрения замены
     validity_period: Optional[str] = None  # Срок действия (партия)
-    product: str = ""  # Изделие
+    products: List[str] = field(default_factory=list)  # Изделия (машины)
     reason: str = ""  # Причина
     tko_conclusion: str = ""  # Заключение ТКО
     

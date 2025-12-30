@@ -18,7 +18,7 @@ class DocumentSerializer:
             "document_number": document_data.document_number,
             "implementation_date": document_data.implementation_date.isoformat() if document_data.implementation_date else None,
             "validity_period": document_data.validity_period,
-            "product": document_data.product,
+            "products": document_data.products,  # Список продуктов
             "reason": document_data.reason,
             "tko_conclusion": document_data.tko_conclusion,
             "part_changes": []
@@ -61,11 +61,19 @@ class DocumentSerializer:
         """Десериализовать JSON строку в DocumentData"""
         data = json.loads(json_str)
         
+        # Обратная совместимость: если есть старое поле "product" (строка), преобразуем в список
+        products = data.get("products", [])
+        if not products and "product" in data:
+            # Старый формат - одна строка
+            old_product = data.get("product", "")
+            if old_product:
+                products = [old_product]
+        
         document_data = DocumentData(
             document_number=data.get("document_number"),
             implementation_date=date.fromisoformat(data["implementation_date"]) if data.get("implementation_date") else None,
             validity_period=data.get("validity_period"),
-            product=data.get("product", ""),
+            products=products,
             reason=data.get("reason", ""),
             tko_conclusion=data.get("tko_conclusion", "")
         )

@@ -3,7 +3,7 @@
 """
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QMessageBox, QFileDialog, QSpinBox
+    QLineEdit, QMessageBox, QFileDialog, QSpinBox, QCheckBox
 )
 from pathlib import Path
 
@@ -78,6 +78,17 @@ class SettingsDialog(QDialog):
         
         layout.addLayout(current_number_layout)
         
+        # Настройка автоматического открытия файла после генерации
+        open_after_layout = QVBoxLayout()
+        self.open_after_checkbox = QCheckBox("Автоматически открывать файл после генерации")
+        open_after_layout.addWidget(self.open_after_checkbox)
+        
+        open_after_info = QLabel("После успешной генерации документа файл будет автоматически открыт в Excel для просмотра и печати")
+        open_after_info.setStyleSheet("color: gray; font-size: 10px;")
+        open_after_layout.addWidget(open_after_info)
+        
+        layout.addLayout(open_after_layout)
+        
         layout.addStretch()
         
         # Кнопки
@@ -111,6 +122,10 @@ class SettingsDialog(QDialog):
         # Загружаем текущий номер (следующий номер, который будет использован)
         current_number = self.numbering_manager.get_current_number()
         self.current_number_spin.setValue(current_number)
+        
+        # Загружаем настройку автоматического открытия файла
+        open_after = self.settings_manager.get_open_after_generate()
+        self.open_after_checkbox.setChecked(open_after)
     
     def browse_directory(self):
         """Выбрать папку для сохранения"""
@@ -160,6 +175,10 @@ class SettingsDialog(QDialog):
             # Сохраняем начальный номер
             starting_number = self.starting_number_spin.value()
             self.settings_manager.set_starting_number(starting_number)
+            
+            # Сохраняем настройку автоматического открытия файла
+            open_after = self.open_after_checkbox.isChecked()
+            self.settings_manager.set_open_after_generate(open_after)
             
             # Устанавливаем текущий номер (если он был изменен)
             current_number = self.current_number_spin.value()

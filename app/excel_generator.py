@@ -317,9 +317,8 @@ class ExcelGenerator:
             document_data.document_number = self.numbering.get_next_number()
             logger.info(f"Автоматически присвоен номер документа: {document_data.document_number}")
         else:
-            # Увеличиваем счётчик, если номер уже был установлен
-            self.numbering.set_number(document_data.document_number)
-            self.numbering.get_next_number()
+            # Сохраняем вручную установленный номер как использованный
+            self.numbering.mark_number_as_used(document_data.document_number)
             logger.info(f"Используется номер документа: {document_data.document_number}")
         
         # Подсчитываем общее количество деталей с изменениями

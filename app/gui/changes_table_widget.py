@@ -535,17 +535,18 @@ class ChangesTableWidget(QWidget):
                     QMessageBox.warning(self, "Ошибка", "Не удалось сохранить набор материалов")
     
     def _deduplicate_materials(self, materials: List[CatalogEntry]) -> List[CatalogEntry]:
-        """Дедупликация материалов по уникальному ключу (workshop, role, before_name)"""
+        """Дедупликация материалов по уникальному ключу (workshop, role, before_name, unit)"""
         seen = set()
         unique_materials = []
         for material in materials:
-            # Создаем уникальный ключ из workshop, role и before_name
-            key = (material.workshop, material.role, material.before_name)
+            # Создаем уникальный ключ из workshop, role, before_name и unit
+            # Материалы с одинаковым названием, но разными единицами измерения считаются разными
+            key = (material.workshop, material.role, material.before_name, material.unit)
             if key not in seen:
                 seen.add(key)
                 unique_materials.append(material)
             else:
-                logger.debug(f"Пропущен дубликат материала: {material.part}, {material.workshop}, {material.role}, {material.before_name}")
+                logger.debug(f"Пропущен дубликат материала: {material.part}, {material.workshop}, {material.role}, {material.before_name}, {material.unit}")
         return unique_materials
 
     def _pick_matching_from_set(

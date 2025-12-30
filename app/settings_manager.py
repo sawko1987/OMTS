@@ -21,7 +21,8 @@ class SettingsManager:
         """Загрузить настройки из файла"""
         default_settings = {
             "output_directory": None,  # Путь к папке сохранения документов
-            "starting_number": 1  # Начальный номер для нумерации извещений
+            "starting_number": 1,  # Начальный номер для нумерации извещений
+            "open_after_generate": True  # Автоматически открывать файл после генерации
         }
         
         if not self.settings_file.exists():
@@ -77,5 +78,16 @@ class SettingsManager:
         if not isinstance(number, int) or number < 1:
             raise ValueError("Начальный номер должен быть положительным целым числом")
         self._settings["starting_number"] = number
+        self._save_settings()
+    
+    def get_open_after_generate(self) -> bool:
+        """Получить настройку автоматического открытия файла после генерации"""
+        return self._settings.get("open_after_generate", True)
+    
+    def set_open_after_generate(self, value: bool):
+        """Установить настройку автоматического открытия файла после генерации"""
+        if not isinstance(value, bool):
+            raise ValueError("Значение должно быть булевым")
+        self._settings["open_after_generate"] = value
         self._save_settings()
 

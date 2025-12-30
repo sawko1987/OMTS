@@ -132,6 +132,22 @@ class DatabaseManager:
                     FOREIGN KEY (catalog_entry_id) REFERENCES catalog_entries(id) ON DELETE CASCADE
                 )
             """)
+
+            # Глобальный словарь замен: материал "до" -> варианты материалов "после"
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS material_replacement_dictionary (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    from_workshop TEXT NOT NULL,
+                    from_name TEXT NOT NULL,
+                    from_unit TEXT NOT NULL,
+                    to_workshop TEXT NOT NULL,
+                    to_name TEXT NOT NULL,
+                    to_unit TEXT NOT NULL,
+                    to_norm REAL NOT NULL DEFAULT 0,
+                    to_comment TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             
             # Таблица документов (извещений)
             cursor.execute("""
@@ -180,6 +196,8 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_replacement_sets_part_code ON material_replacement_sets(part_code)",
             "CREATE INDEX IF NOT EXISTS idx_set_items_set_id ON material_set_items(set_id)",
             "CREATE INDEX IF NOT EXISTS idx_set_items_entry_id ON material_set_items(catalog_entry_id)",
+            "CREATE INDEX IF NOT EXISTS idx_dictionary_from_key ON material_replacement_dictionary(from_workshop, from_name, from_unit)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_dictionary_link ON material_replacement_dictionary(from_workshop, from_name, from_unit, to_workshop, to_name, to_unit, to_norm, to_comment)",
             "CREATE INDEX IF NOT EXISTS idx_documents_number_year ON documents(document_number, year)",
             "CREATE INDEX IF NOT EXISTS idx_documents_year ON documents(year)",
         ]
