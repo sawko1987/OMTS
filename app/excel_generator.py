@@ -313,12 +313,16 @@ class ExcelGenerator:
         logger.debug(f"Шаблон загружен. Листы в шаблоне: {wb.sheetnames}")
         
         # Получаем номер документа
+        # Используем год из даты внедрения для определения номера
+        impl_date = document_data.implementation_date
+        year = impl_date.year if impl_date else None
+        
         if not document_data.document_number:
-            document_data.document_number = self.numbering.get_next_number()
+            document_data.document_number = self.numbering.get_next_number(year)
             logger.info(f"Автоматически присвоен номер документа: {document_data.document_number}")
         else:
             # Сохраняем вручную установленный номер как использованный
-            self.numbering.mark_number_as_used(document_data.document_number)
+            self.numbering.mark_number_as_used(document_data.document_number, year)
             logger.info(f"Используется номер документа: {document_data.document_number}")
         
         # Подсчитываем общее количество деталей с изменениями
@@ -738,9 +742,9 @@ class ExcelGenerator:
         """Обработать дополнительные листы при переполнении
         
         Записывает ТОЛЬКО значения, сохраняя разметку шаблона.
-        Автоматически распределяет данные по листам 1+/2+/... так, чтобы каждый лист печатался в 1 страницу.
-        Если деталь явно назначена на страницу N+ (additional_page_number=N), она стартует с этой страницы,
-        но при переполнении "хвост" переносится на следующие страницы.
+        Простая логика:
+        1. Сначала обрабатываем все детали БЕЗ additional_page_number по существующей логике
+        2. Затем находим первый пустой лист и помещаем туда детали С additional_page_number
         """
         logger.info(f"Начало обработки дополнительных страниц. Получено данных: {len(remaining_data)} деталей")
         
@@ -756,6 +760,18 @@ class ExcelGenerator:
         
         logger.info(f"После фильтрации осталось: {len(filtered_remaining_data)} деталей с изменениями")
         
+        # Разделяем детали на две группы: без additional_page_number и с additional_page_number
+        parts_without_page_number = []
+        parts_with_page_number = []
+        for part_change in filtered_remaining_data:
+            if part_change.additional_page_number is None:
+                parts_without_page_number.append(part_change)
+            else:
+                parts_with_page_number.append(part_change)
+        
+        logger.info(f"[handle_additional_sheets] Деталей без additional_page_number: {len(parts_without_page_number)}")
+        logger.info(f"[handle_additional_sheets] Деталей с additional_page_number: {len(parts_with_page_number)}")
+        
         def additional_sheet_sort_key(name: str) -> int:
             if not name.endswith("+"):
                 return 10**9
@@ -768,7 +784,7 @@ class ExcelGenerator:
         additional_sheet_names = sorted([name for name in wb.sheetnames if name.endswith("+")], key=additional_sheet_sort_key)
         logger.debug(f"Найдено шаблонных дополнительных листов: {len(additional_sheet_names)} ({additional_sheet_names})")
         
-        if not filtered_remaining_data:
+        if not parts_without_page_number and not parts_with_page_number:
             # Нет данных для доп. листов - скрываем все листы с "+"
             logger.info("Нет данных для дополнительных страниц, скрываем все дополнительные листы")
             for sheet_name in additional_sheet_names:
@@ -776,17 +792,6 @@ class ExcelGenerator:
                 sheet.sheet_state = 'hidden'
                 logger.debug(f"Скрыт лист: {sheet_name}")
             return
-        
-        # Группируем детали по "стартовой" странице (additional_page_number, None -> 1+),
-        # при этом сохраняем порядок появления в документе.
-        data_by_start_page: Dict[int, List[PartChanges]] = {}
-        for idx, part_change in enumerate(filtered_remaining_data):
-            page_num = part_change.additional_page_number or 1
-            data_by_start_page.setdefault(page_num, []).append(part_change)
-            logger.debug(f"Деталь '{part_change.part}' стартует со страницы {page_num}+ (idx={idx})")
-
-        max_start_page = max(data_by_start_page.keys()) if data_by_start_page else 1
-        logger.info(f"Стартовые страницы данных: {sorted(data_by_start_page.keys())}, max={max_start_page}")
 
         # Эталонный лист для всех доп. страниц: 1+
         base_sheet = None
@@ -813,79 +818,55 @@ class ExcelGenerator:
             new_sheet.title = name
             logger.info(f"Создан новый лист: {name}")
             return name
-
-        pages_with_data: Set[int] = set()
-        carry_over: List[PartChanges] = []
-        page_num = 1
-
-        # Идём по страницам, пока есть данные (явные или перенесённые)
-        while page_num <= max_start_page or carry_over:
-            parts_for_page: List[PartChanges] = []
-            if carry_over:
-                parts_for_page.extend(carry_over)
-                carry_over = []
-            parts_for_page.extend(data_by_start_page.get(page_num, []))
-
-            if not parts_for_page:
-                page_num += 1
-                continue
-
-            sheet_name = ensure_additional_sheet(page_num)
-            sheet = wb[sheet_name]
-            # Приводим настройки печати/разметки листа к эталону 1+
-            self._normalize_additional_sheet_layout(sheet, base_sheet)
-            logger.info(f"Обработка страницы {page_num}+ (лист '{sheet_name}'), деталей к попытке записи: {len(parts_for_page)}")
-
-            # Ограничиваем лист одной страницей печати: скрываем всё ниже data_end_row.
+        
+        def is_sheet_empty(sheet) -> bool:
+            """Проверяет, пуст ли лист (нет данных в области таблицы)"""
             data_start_row, data_end_row = self._get_additional_sheet_bounds(sheet)
-            self._set_rows_hidden(sheet, 1, data_end_row, False)
-            self._set_rows_hidden(sheet, data_end_row + 1, max(sheet.max_row, data_end_row + 1), True)
-
-            # Очищаем старые данные (только область таблицы)
-            self.clear_additional_sheet_data(sheet)
-
-            # Заполняем шапку
-            self.fill_additional_sheet_header(sheet, doc_data)
-
+            for row in range(data_start_row, data_end_row + 1):
+                for col in range(1, 15):  # Колонки A-N
+                    cell = get_merged_cell_value(sheet, row, col)
+                    if cell.value is not None and str(cell.value).strip():
+                        return False
+            return True
+        
+        def write_parts_to_sheet(sheet, parts: List[PartChanges], page_num: int) -> int:
+            """Записывает детали на лист. Возвращает количество записанных деталей."""
+            data_start_row, data_end_row = self._get_additional_sheet_bounds(sheet)
             current_row = data_start_row
-            parts_on_page = 0
-            materials_on_page = 0
-
-            for i, part_change in enumerate(parts_for_page):
-                # Разделяем материалы на "до" и "после" независимо
+            parts_written = 0
+            materials_written = 0
+            
+            for part_change in parts:
                 before_materials = [m for m in part_change.materials if m.is_changed]
                 after_materials = [m for m in part_change.materials if m.after_name and m.after_name.strip()]
                 max_rows = max(len(before_materials), len(after_materials))
                 
                 if not before_materials and not after_materials:
                     continue
-
+                
                 rows_needed = 1 + max_rows
                 rows_available = data_end_row - current_row + 1
-
+                
+                # Если не помещается, прекращаем запись
                 if rows_needed > rows_available:
-                    # ВАЖНО: переносим текущую деталь и всё, что после неё, чтобы не ломать порядок
-                    carry_over = parts_for_page[i:]
-                    logger.info(
-                        f"Переполнение на {page_num}+: деталь '{part_change.part}' "
-                        f"не помещается (нужно {rows_needed}, доступно {rows_available}), "
-                        f"переносим {len(carry_over)} деталей на {page_num + 1}+"
+                    logger.warning(
+                        f"[handle_additional_sheets] Деталь '{part_change.part}' не помещается на страницу {page_num}+ "
+                        f"(нужно {rows_needed}, доступно {rows_available})"
                     )
                     break
-
-                logger.debug(f"Запись детали '{part_change.part}' на страницу {page_num}+, строка {current_row} (материалов 'до': {len(before_materials)}, 'после': {len(after_materials)})")
-
+                
+                logger.info(f"[handle_additional_sheets] Запись детали '{part_change.part}' на страницу {page_num}+, строка {current_row}")
+                
                 # Записываем деталь
                 cell = get_merged_cell_value(sheet, current_row, 1)
                 cell.value = part_change.part
                 cell = get_merged_cell_value(sheet, current_row, 7)
                 cell.value = part_change.part
                 current_row += 1
-                parts_on_page += 1
-
-                # Записываем материалы независимо в левой и правой колонках
+                parts_written += 1
+                
+                # Записываем материалы
                 for j in range(max_rows):
-                    # Левая часть
                     if j < len(before_materials):
                         material = before_materials[j]
                         cell = get_merged_cell_value(sheet, current_row, 1)
@@ -895,8 +876,7 @@ class ExcelGenerator:
                         cell = get_merged_cell_value(sheet, current_row, 5)
                         cell.value = material.catalog_entry.norm
                         cell.number_format = "0.000"
-
-                    # Правая часть
+                    
                     if j < len(after_materials):
                         material = after_materials[j]
                         cell = get_merged_cell_value(sheet, current_row, 7)
@@ -907,27 +887,246 @@ class ExcelGenerator:
                             cell = get_merged_cell_value(sheet, current_row, 10)
                             cell.value = material.after_norm
                             cell.number_format = "0.000"
-
+                    
                     current_row += 1
-                    materials_on_page += 1
+                    materials_written += 1
+            
+            return parts_written
 
-            # Данные были записаны?
-            if current_row > data_start_row:
-                sheet.sheet_state = 'visible'
-                pages_with_data.add(page_num)
-                logger.info(
-                    f"Страница {page_num}+ заполнена: {parts_on_page} деталей, {materials_on_page} материалов, "
-                    f"использовано строк: {current_row - data_start_row} (лимит до {data_end_row})"
-                )
-            else:
-                sheet.sheet_state = 'hidden'
-                logger.warning(f"Страница {page_num}+ оказалась пустой после обработки, скрываем")
-
-            # Обновляем max_start_page, если данные были только в carry_over (спилл за пределы явных страниц)
-            if carry_over and page_num + 1 > max_start_page:
-                max_start_page = page_num + 1
-
-            page_num += 1
+        pages_with_data: Set[int] = set()
+        
+        # ФАЗА 1: Обрабатываем детали БЕЗ additional_page_number по существующей логике
+        if parts_without_page_number:
+            logger.info(f"[handle_additional_sheets] ФАЗА 1: Обработка {len(parts_without_page_number)} деталей без additional_page_number")
+            carry_over: List[PartChanges] = []
+            page_num = 1
+            
+            while parts_without_page_number or carry_over:
+                parts_for_page: List[PartChanges] = []
+                
+                if carry_over:
+                    parts_for_page.extend(carry_over)
+                    carry_over = []
+                
+                if parts_without_page_number:
+                    parts_for_page.extend(parts_without_page_number)
+                    parts_without_page_number = []
+                
+                if not parts_for_page:
+                    break
+                
+                sheet_name = ensure_additional_sheet(page_num)
+                sheet = wb[sheet_name]
+                self._normalize_additional_sheet_layout(sheet, base_sheet)
+                
+                data_start_row, data_end_row = self._get_additional_sheet_bounds(sheet)
+                self._set_rows_hidden(sheet, 1, data_end_row, False)
+                self._set_rows_hidden(sheet, data_end_row + 1, max(sheet.max_row, data_end_row + 1), True)
+                
+                self.clear_additional_sheet_data(sheet)
+                self.fill_additional_sheet_header(sheet, doc_data)
+                
+                current_row = data_start_row
+                parts_on_page = 0
+                
+                for i, part_change in enumerate(parts_for_page):
+                    before_materials = [m for m in part_change.materials if m.is_changed]
+                    after_materials = [m for m in part_change.materials if m.after_name and m.after_name.strip()]
+                    max_rows = max(len(before_materials), len(after_materials))
+                    
+                    if not before_materials and not after_materials:
+                        continue
+                    
+                    rows_needed = 1 + max_rows
+                    rows_available = data_end_row - current_row + 1
+                    
+                    if rows_needed > rows_available:
+                        # Переносим оставшиеся детали на следующую страницу
+                        carry_over = parts_for_page[i:]
+                        logger.warning(
+                            f"[handle_additional_sheets] Переполнение на {page_num}+: деталь '{part_change.part}' "
+                            f"не помещается (нужно {rows_needed}, доступно {rows_available}), "
+                            f"переносим {len(carry_over)} деталей на {page_num + 1}+"
+                        )
+                        break
+                    
+                    # Записываем деталь
+                    cell = get_merged_cell_value(sheet, current_row, 1)
+                    cell.value = part_change.part
+                    cell = get_merged_cell_value(sheet, current_row, 7)
+                    cell.value = part_change.part
+                    current_row += 1
+                    parts_on_page += 1
+                    
+                    # Записываем материалы
+                    for j in range(max_rows):
+                        if j < len(before_materials):
+                            material = before_materials[j]
+                            cell = get_merged_cell_value(sheet, current_row, 1)
+                            cell.value = material.catalog_entry.before_name
+                            cell = get_merged_cell_value(sheet, current_row, 4)
+                            cell.value = material.catalog_entry.unit
+                            cell = get_merged_cell_value(sheet, current_row, 5)
+                            cell.value = material.catalog_entry.norm
+                            cell.number_format = "0.000"
+                        
+                        if j < len(after_materials):
+                            material = after_materials[j]
+                            cell = get_merged_cell_value(sheet, current_row, 7)
+                            cell.value = material.after_name
+                            cell = get_merged_cell_value(sheet, current_row, 9)
+                            cell.value = material.after_unit if material.after_unit else material.catalog_entry.unit
+                            if material.after_norm is not None:
+                                cell = get_merged_cell_value(sheet, current_row, 10)
+                                cell.value = material.after_norm
+                                cell.number_format = "0.000"
+                        
+                        current_row += 1
+                
+                if parts_on_page > 0:
+                    sheet.sheet_state = 'visible'
+                    pages_with_data.add(page_num)
+                    logger.info(f"[handle_additional_sheets] Страница {page_num}+ заполнена: {parts_on_page} деталей")
+                
+                page_num += 1
+        
+        # ФАЗА 2: Находим первый пустой лист и помещаем туда детали С additional_page_number
+        # Если детали не помещаются, создаем новые листы и продолжаем запись
+        if parts_with_page_number:
+            logger.info(f"[handle_additional_sheets] ФАЗА 2: Поиск первого пустого листа для {len(parts_with_page_number)} деталей с additional_page_number")
+            
+            # Начинаем поиск с листа 2+ (лист 1+ уже может быть занят)
+            target_page = 2
+            found_empty = False
+            while target_page <= 100:
+                sheet_name = ensure_additional_sheet(target_page)
+                sheet = wb[sheet_name]
+                
+                if is_sheet_empty(sheet):
+                    logger.info(f"[handle_additional_sheets] Найден пустой лист {target_page}+, помещаем туда детали с additional_page_number")
+                    found_empty = True
+                    break
+                else:
+                    logger.info(f"[handle_additional_sheets] Лист {target_page}+ занят, проверяем следующий")
+                    target_page += 1
+            
+            # Если не нашли пустой лист до 100+, создаем новый лист после максимального номера
+            if not found_empty:
+                # Находим максимальный номер существующего листа с "+"
+                max_page = 0
+                for name in wb.sheetnames:
+                    if name.endswith("+"):
+                        try:
+                            page_num = int(name[:-1])
+                            max_page = max(max_page, page_num)
+                        except ValueError:
+                            pass
+                target_page = max_page + 1
+                logger.info(f"[handle_additional_sheets] Все листы до 100+ заняты, создаем новый лист {target_page}+ для деталей с additional_page_number")
+            
+            # Записываем детали, создавая новые листы при необходимости
+            remaining_parts = parts_with_page_number.copy()
+            total_parts_written = 0
+            
+            while remaining_parts:
+                sheet_name = ensure_additional_sheet(target_page)
+                sheet = wb[sheet_name]
+                
+                self._normalize_additional_sheet_layout(sheet, base_sheet)
+                data_start_row, data_end_row = self._get_additional_sheet_bounds(sheet)
+                self._set_rows_hidden(sheet, 1, data_end_row, False)
+                self._set_rows_hidden(sheet, data_end_row + 1, max(sheet.max_row, data_end_row + 1), True)
+                
+                self.clear_additional_sheet_data(sheet)
+                self.fill_additional_sheet_header(sheet, doc_data)
+                
+                current_row = data_start_row
+                parts_on_page = 0
+                parts_to_keep = []
+                
+                for part_change in remaining_parts:
+                    before_materials = [m for m in part_change.materials if m.is_changed]
+                    after_materials = [m for m in part_change.materials if m.after_name and m.after_name.strip()]
+                    max_rows = max(len(before_materials), len(after_materials))
+                    
+                    if not before_materials and not after_materials:
+                        # Пропускаем детали без материалов (они уже записаны)
+                        total_parts_written += 1
+                        continue
+                    
+                    rows_needed = 1 + max_rows
+                    rows_available = data_end_row - current_row + 1
+                    
+                    # Если не помещается, создаем новый лист и продолжаем запись
+                    if rows_needed > rows_available:
+                        logger.info(
+                            f"[handle_additional_sheets] Деталь '{part_change.part}' не помещается на страницу {target_page}+ "
+                            f"(нужно {rows_needed}, доступно {rows_available}), создаем новый лист"
+                        )
+                        # Оставляем эту деталь и все последующие для следующего листа
+                        idx = remaining_parts.index(part_change)
+                        parts_to_keep = remaining_parts[idx:]
+                        break
+                    
+                    logger.info(f"[handle_additional_sheets] Запись детали '{part_change.part}' на страницу {target_page}+, строка {current_row}")
+                    
+                    # Записываем деталь
+                    cell = get_merged_cell_value(sheet, current_row, 1)
+                    cell.value = part_change.part
+                    cell = get_merged_cell_value(sheet, current_row, 7)
+                    cell.value = part_change.part
+                    current_row += 1
+                    parts_on_page += 1
+                    total_parts_written += 1
+                    
+                    # Записываем материалы
+                    for j in range(max_rows):
+                        if j < len(before_materials):
+                            material = before_materials[j]
+                            cell = get_merged_cell_value(sheet, current_row, 1)
+                            cell.value = material.catalog_entry.before_name
+                            cell = get_merged_cell_value(sheet, current_row, 4)
+                            cell.value = material.catalog_entry.unit
+                            cell = get_merged_cell_value(sheet, current_row, 5)
+                            cell.value = material.catalog_entry.norm
+                            cell.number_format = "0.000"
+                        
+                        if j < len(after_materials):
+                            material = after_materials[j]
+                            cell = get_merged_cell_value(sheet, current_row, 7)
+                            cell.value = material.after_name
+                            cell = get_merged_cell_value(sheet, current_row, 9)
+                            cell.value = material.after_unit if material.after_unit else material.catalog_entry.unit
+                            if material.after_norm is not None:
+                                cell = get_merged_cell_value(sheet, current_row, 10)
+                                cell.value = material.after_norm
+                                cell.number_format = "0.000"
+                        
+                        current_row += 1
+                
+                # Обновляем список оставшихся деталей
+                remaining_parts = parts_to_keep
+                
+                if parts_on_page > 0:
+                    sheet.sheet_state = 'visible'
+                    pages_with_data.add(target_page)
+                    logger.info(f"[handle_additional_sheets] На страницу {target_page}+ записано {parts_on_page} деталей с additional_page_number")
+                
+                # Если остались детали, создаем новый лист
+                if remaining_parts:
+                    # Находим максимальный номер существующего листа с "+"
+                    max_page = 0
+                    for name in wb.sheetnames:
+                        if name.endswith("+"):
+                            try:
+                                page_num = int(name[:-1])
+                                max_page = max(max_page, page_num)
+                            except ValueError:
+                                pass
+                    target_page = max_page + 1
+                    logger.info(f"[handle_additional_sheets] Создаем новый лист {target_page}+ для оставшихся {len(remaining_parts)} деталей с additional_page_number")
+            
+            logger.info(f"[handle_additional_sheets] Всего записано {total_parts_written} деталей с additional_page_number")
         
         # ВАЖНО: Скрываем ВСЕ неиспользуемые листы (те, на которые не было записано данных)
         # Это включает листы, которые были в шаблоне, но остались пустыми

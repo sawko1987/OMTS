@@ -646,6 +646,35 @@ class ChangesTableWidget(QWidget):
             additional_page = None
             if hasattr(self, 'get_current_additional_page') and callable(self.get_current_additional_page):
                 additional_page = self.get_current_additional_page()
+                logger.info(f"[add_part] Деталь '{part}': получен номер страницы из get_current_additional_page() = {additional_page}")
+            else:
+                logger.info(f"[add_part] Деталь '{part}': get_current_additional_page не доступен, additional_page = None")
+            
+            # ВАЖНО: Если номер страницы установлен, убеждаемся, что он больше максимального существующего
+            # Это гарантирует, что деталь всегда попадает на новую страницу
+            if additional_page is not None:
+                max_existing_page = 0
+                existing_pages = []
+                all_parts_info = []
+                for existing_part_change in self.document_data.part_changes:
+                    all_parts_info.append((existing_part_change.part, existing_part_change.additional_page_number))
+                    if existing_part_change.additional_page_number is not None:
+                        max_existing_page = max(max_existing_page, existing_part_change.additional_page_number)
+                        existing_pages.append((existing_part_change.part, existing_part_change.additional_page_number))
+                logger.info(f"[add_part] Деталь '{part}': всего деталей в document_data = {len(self.document_data.part_changes)}")
+                logger.info(f"[add_part] Деталь '{part}': все детали с их номерами страниц: {all_parts_info}")
+                logger.info(f"[add_part] Деталь '{part}': максимальный существующий номер страницы = {max_existing_page}")
+                logger.info(f"[add_part] Деталь '{part}': существующие детали по страницам: {existing_pages}")
+                
+                # Если установленный номер страницы не больше максимального, увеличиваем его
+                if additional_page <= max_existing_page:
+                    old_page = additional_page
+                    additional_page = max_existing_page + 1
+                    logger.warning(f"[add_part] Деталь '{part}': номер страницы увеличен с {old_page} до {additional_page} (был <= максимального {max_existing_page})")
+                else:
+                    logger.info(f"[add_part] Деталь '{part}': номер страницы {additional_page} корректен (больше максимального {max_existing_page})")
+            
+            logger.info(f"[add_part] Деталь '{part}': финальный номер страницы = {additional_page}")
             part_changes = PartChanges(part=part, additional_page_number=additional_page)
             
             # Получаем материалы из набора "to" для сопоставления
@@ -728,6 +757,10 @@ class ChangesTableWidget(QWidget):
                     part_changes.materials.append(material_change)
             
             self.document_data.part_changes.append(part_changes)
+            logger.info(f"[add_part] Деталь '{part}' добавлена в document_data с номером страницы = {part_changes.additional_page_number}")
+            logger.info(f"[add_part] Всего деталей в document_data: {len(self.document_data.part_changes)}")
+            all_pages_after = [(pc.part, pc.additional_page_number) for pc in self.document_data.part_changes if pc.additional_page_number is not None]
+            logger.info(f"[add_part] Все детали с доп. страницами после добавления: {all_pages_after}")
         else:
             # Нет наборов - используем старую логику
             entries = self.catalog_loader.get_entries_by_part(part)
@@ -749,12 +782,45 @@ class ChangesTableWidget(QWidget):
             additional_page = None
             if hasattr(self, 'get_current_additional_page') and callable(self.get_current_additional_page):
                 additional_page = self.get_current_additional_page()
+                logger.info(f"[add_part] Деталь '{part}' (без наборов): получен номер страницы из get_current_additional_page() = {additional_page}")
+            else:
+                logger.info(f"[add_part] Деталь '{part}' (без наборов): get_current_additional_page не доступен, additional_page = None")
+            
+            # ВАЖНО: Если номер страницы установлен, убеждаемся, что он больше максимального существующего
+            # Это гарантирует, что деталь всегда попадает на новую страницу
+            if additional_page is not None:
+                max_existing_page = 0
+                existing_pages = []
+                all_parts_info = []
+                for existing_part_change in self.document_data.part_changes:
+                    all_parts_info.append((existing_part_change.part, existing_part_change.additional_page_number))
+                    if existing_part_change.additional_page_number is not None:
+                        max_existing_page = max(max_existing_page, existing_part_change.additional_page_number)
+                        existing_pages.append((existing_part_change.part, existing_part_change.additional_page_number))
+                logger.info(f"[add_part] Деталь '{part}' (без наборов): всего деталей в document_data = {len(self.document_data.part_changes)}")
+                logger.info(f"[add_part] Деталь '{part}' (без наборов): все детали с их номерами страниц: {all_parts_info}")
+                logger.info(f"[add_part] Деталь '{part}' (без наборов): максимальный существующий номер страницы = {max_existing_page}")
+                logger.info(f"[add_part] Деталь '{part}' (без наборов): существующие детали по страницам: {existing_pages}")
+                
+                # Если установленный номер страницы не больше максимального, увеличиваем его
+                if additional_page <= max_existing_page:
+                    old_page = additional_page
+                    additional_page = max_existing_page + 1
+                    logger.warning(f"[add_part] Деталь '{part}' (без наборов): номер страницы увеличен с {old_page} до {additional_page} (был <= максимального {max_existing_page})")
+                else:
+                    logger.info(f"[add_part] Деталь '{part}' (без наборов): номер страницы {additional_page} корректен (больше максимального {max_existing_page})")
+            
+            logger.info(f"[add_part] Деталь '{part}' (без наборов): финальный номер страницы = {additional_page}")
             part_changes = PartChanges(part=part, additional_page_number=additional_page)
             for entry in entries:
                 material_change = MaterialChange(catalog_entry=entry)
                 part_changes.materials.append(material_change)
             
             self.document_data.part_changes.append(part_changes)
+            logger.info(f"[add_part] Деталь '{part}' (без наборов) добавлена в document_data с номером страницы = {part_changes.additional_page_number}")
+            logger.info(f"[add_part] Всего деталей в document_data: {len(self.document_data.part_changes)}")
+            all_pages_after = [(pc.part, pc.additional_page_number) for pc in self.document_data.part_changes if pc.additional_page_number is not None]
+            logger.info(f"[add_part] Все детали с доп. страницами после добавления: {all_pages_after}")
         
         # Автоматически привязываем деталь к изделию, если изделие выбрано
         self._link_part_to_product(part)

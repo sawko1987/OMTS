@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import logging
 
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QKeyEvent
@@ -39,6 +40,8 @@ from app.gui.replacement_dictionary_dialog import ReplacementDictionaryDialog
 from app.gui.set_selection_dialog import ReplacementSetSelectionDialog
 from app.history_store import HistoryStore
 from app.product_store import ProductStore
+
+logger = logging.getLogger(__name__)
 
 
 class ReplacementSetsEditorWidget(QWidget):
@@ -1036,6 +1039,31 @@ class ReplacementSetsEditorWidget(QWidget):
                 and callable(self.get_current_additional_page)
             ):
                 additional_page = self.get_current_additional_page()
+                logger.info(f"[_add_part_to_document] Деталь '{part}': получен номер страницы из get_current_additional_page() = {additional_page}")
+            else:
+                logger.info(f"[_add_part_to_document] Деталь '{part}': get_current_additional_page не доступен, additional_page = None")
+            
+            # ВАЖНО: Если номер страницы установлен, убеждаемся, что он больше максимального существующего
+            # Это гарантирует, что деталь всегда попадает на новую страницу
+            if additional_page is not None:
+                max_existing_page = 0
+                existing_pages = []
+                for existing_part_change in self.document_data.part_changes:
+                    if existing_part_change.additional_page_number is not None:
+                        max_existing_page = max(max_existing_page, existing_part_change.additional_page_number)
+                        existing_pages.append((existing_part_change.part, existing_part_change.additional_page_number))
+                logger.info(f"[_add_part_to_document] Деталь '{part}': максимальный существующий номер страницы = {max_existing_page}")
+                logger.info(f"[_add_part_to_document] Деталь '{part}': существующие детали по страницам: {existing_pages}")
+                
+                # Если установленный номер страницы не больше максимального, увеличиваем его
+                if additional_page <= max_existing_page:
+                    old_page = additional_page
+                    additional_page = max_existing_page + 1
+                    logger.warning(f"[_add_part_to_document] Деталь '{part}': номер страницы увеличен с {old_page} до {additional_page} (был <= максимального {max_existing_page})")
+                else:
+                    logger.info(f"[_add_part_to_document] Деталь '{part}': номер страницы {additional_page} корректен (больше максимального {max_existing_page})")
+            
+            logger.info(f"[_add_part_to_document] Деталь '{part}': финальный номер страницы = {additional_page}")
             part_changes = PartChanges(part=part, additional_page_number=additional_page)
 
             # Получаем материалы из набора "to" для сопоставления

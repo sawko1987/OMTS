@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from pathlib import Path
 from datetime import date
 import re
+import logging
 
 from app.models import DocumentData
 from app.gui.document_info_widget import DocumentInfoWidget
@@ -36,6 +37,8 @@ class MainWindow(QMainWindow):
         
         # Счётчик дополнительных страниц (0 = первая страница, 1 = 1+, 2 = 2+ и т.д.)
         self.current_additional_page = None  # None = данные идут на первую страницу
+        # Следующий номер доп. страницы, который будет назначен при нажатии кнопки
+        self.next_additional_page = 1
         
         # Инициализация БД (до создания UI)
         self.init_database()
@@ -448,8 +451,11 @@ class MainWindow(QMainWindow):
         numbering = NumberingManager()
         if not self.document_data.document_number:
             # Получаем следующий номер и устанавливаем его в document_data
+            # Используем год из даты внедрения для определения номера
             # Генератор использует существующий номер и не будет вызывать get_next_number()
-            doc_number = numbering.get_next_number()
+            impl_date = self.document_data.implementation_date
+            year = impl_date.year if impl_date else None
+            doc_number = numbering.get_next_number(year)
             self.document_data.document_number = doc_number
         else:
             doc_number = self.document_data.document_number
@@ -479,6 +485,29 @@ class MainWindow(QMainWindow):
         from app.excel_generator import ExcelGenerator
         
         try:
+            # Проверяем, существует ли уже документ с таким номером и годом
+            document_year = self.document_data.implementation_date.year if self.document_data.implementation_date else date.today().year
+            if self.document_store.document_exists(doc_number, document_year):
+                # Получаем информацию о существующем документе
+                existing_docs = self.document_store.get_all_documents(document_year)
+                existing_doc = next((d for d in existing_docs if d[0] == doc_number), None)
+                
+                if existing_doc:
+                    existing_file = Path(existing_doc[3]).name if existing_doc[3] else "неизвестно"
+                    reply = QMessageBox.warning(
+                        self,
+                        "Документ уже существует",
+                        f"Документ №{doc_number} за {document_year} год уже существует:\n\n"
+                        f"Файл: {existing_file}\n"
+                        f"Создан: {existing_doc[2]}\n\n"
+                        f"Перезаписать существующий документ?\n\n"
+                        f"⚠ ВНИМАНИЕ: Это удалит старый документ без возможности восстановления!",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    if reply != QMessageBox.Yes:
+                        return
+            
             generator = ExcelGenerator()
             generator.generate(self.document_data, file_path)
             
@@ -565,15 +594,18 @@ class MainWindow(QMainWindow):
         
         # Создаём новый документ
         self.document_data = DocumentData()
-        self.current_additional_page = None  # Сбрасываем счётчик доп. страниц
+        self.current_additional_page = None  # Сбрасываем активную доп. страницу
+        self.next_additional_page = 1        # Всегда начинаем с 1+ для новых кликов
         self.doc_info_widget.document_data = self.document_data
         self.changes_widget.document_data = self.document_data
+        self.replacement_sets_widget.document_data = self.document_data
         self.doc_info_widget.refresh()
         self.changes_widget.refresh()
         self.changes_widget.update_product_filter()
     
     def open_document(self):
         """Открыть существующий документ"""
+        logger = logging.getLogger(__name__)
         from app.gui.document_selection_dialog import DocumentSelectionDialog
         
         dialog = DocumentSelectionDialog(self.document_store, self)
@@ -585,12 +617,27 @@ class MainWindow(QMainWindow):
                     self.document_data = loaded_data
                     # Определяем максимальный номер доп. страницы для восстановления счётчика
                     max_page = 0
+                    pages_found = []
+                    all_parts_info = []
                     for part_change in self.document_data.part_changes:
+                        all_parts_info.append((part_change.part, part_change.additional_page_number))
                         if part_change.additional_page_number is not None:
                             max_page = max(max_page, part_change.additional_page_number)
-                    self.current_additional_page = max_page if max_page > 0 else None
+                            pages_found.append((part_change.part, part_change.additional_page_number))
+                    
+                    logger.info(f"[open_document] Загружено деталей: {len(self.document_data.part_changes)}")
+                    logger.info(f"[open_document] Все детали с их номерами страниц: {all_parts_info}")
+                    logger.info(f"[open_document] Найдено деталей с доп. страницами: {len(pages_found)}")
+                    logger.info(f"[open_document] Максимальный номер страницы: {max_page}")
+                    logger.info(f"[open_document] Детали по страницам: {pages_found}")
+                    
+                    # Активную страницу сбрасываем, но следующий клик пойдёт на новую страницу
+                    self.current_additional_page = None
+                    self.next_additional_page = max_page + 1 if max_page > 0 else 1
+                    logger.info(f"[open_document] Установлен next_additional_page = {self.next_additional_page}")
                     self.doc_info_widget.document_data = self.document_data
                     self.changes_widget.document_data = self.document_data
+                    self.replacement_sets_widget.document_data = self.document_data
                     self.doc_info_widget.refresh()
                     self.changes_widget.refresh()
                     self.changes_widget.update_product_filter()
@@ -600,15 +647,32 @@ class MainWindow(QMainWindow):
     
     def add_additional_page_data(self):
         """Добавить данные для дополнительной страницы"""
-        # Определяем номер следующей доп. страницы
-        # Находим максимальный номер доп. страницы среди существующих данных
+        logger = logging.getLogger(__name__)
+        
+        # Пересчитываем максимальный номер доп. страницы из существующих данных
+        # Это гарантирует, что каждая новая партия данных всегда идёт на новую страницу
         max_page = 0
+        pages_found = []
+        all_parts_info = []
         for part_change in self.document_data.part_changes:
+            all_parts_info.append((part_change.part, part_change.additional_page_number))
             if part_change.additional_page_number is not None:
                 max_page = max(max_page, part_change.additional_page_number)
+                pages_found.append((part_change.part, part_change.additional_page_number))
         
-        # Увеличиваем счётчик для новой страницы
-        self.current_additional_page = max_page + 1
+        logger.info(f"[add_additional_page_data] Всего деталей в document_data: {len(self.document_data.part_changes)}")
+        logger.info(f"[add_additional_page_data] Все детали с их номерами страниц: {all_parts_info}")
+        logger.info(f"[add_additional_page_data] Найдено деталей с доп. страницами: {len(pages_found)}")
+        logger.info(f"[add_additional_page_data] Максимальный номер страницы: {max_page}")
+        logger.info(f"[add_additional_page_data] Детали по страницам: {pages_found}")
+        
+        # Устанавливаем следующий номер страницы (max + 1, или 1, если нет доп. страниц)
+        self.current_additional_page = max_page + 1 if max_page > 0 else 1
+        # Обновляем счётчик для будущих кликов
+        self.next_additional_page = self.current_additional_page + 1
+        
+        logger.info(f"[add_additional_page_data] Установлен current_additional_page = {self.current_additional_page}")
+        logger.info(f"[add_additional_page_data] Установлен next_additional_page = {self.next_additional_page}")
         
         page_label = f"{self.current_additional_page}+"
         
@@ -643,9 +707,11 @@ class MainWindow(QMainWindow):
         
         if reply == QMessageBox.Yes:
             self.document_data = DocumentData()
-            self.current_additional_page = None  # Сбрасываем счётчик доп. страниц
+            self.current_additional_page = None  # Сбрасываем активную доп. страницу
+            self.next_additional_page = 1        # Следующий клик создаст страницу 1+
             self.doc_info_widget.document_data = self.document_data
             self.changes_widget.document_data = self.document_data
+            self.replacement_sets_widget.document_data = self.document_data
             self.doc_info_widget.refresh()
             self.changes_widget.refresh()
             self.changes_widget.update_product_filter()
