@@ -40,6 +40,9 @@ class MainWindow(QMainWindow):
         # Следующий номер доп. страницы, который будет назначен при нажатии кнопки
         self.next_additional_page = 1
         
+        # Сохраняем последнюю использованную дату для использования при создании нового документа
+        self._last_used_date = None
+        
         # Инициализация БД (до создания UI)
         self.init_database()
         
@@ -343,6 +346,10 @@ class MainWindow(QMainWindow):
         self.doc_info_widget.update_document_data()
         self.changes_widget.update_document_data()
         
+        # Сохраняем дату при обновлении данных (на случай, если пользователь изменил дату)
+        if self.document_data.implementation_date:
+            self._last_used_date = self.document_data.implementation_date
+        
         # Валидация
         if not self.document_data.implementation_date:
             QMessageBox.warning(self, "Ошибка", "Укажите дату внедрения замены")
@@ -526,6 +533,10 @@ class MainWindow(QMainWindow):
                     import logging
                     logging.warning(f"Не удалось автоматически открыть файл: {e}")
             
+            # Сохраняем дату перед созданием нового документа
+            if self.document_data.implementation_date:
+                self._last_used_date = self.document_data.implementation_date
+            
             # Создаём новый документ с новым номером
             self.new_document()
             
@@ -594,6 +605,11 @@ class MainWindow(QMainWindow):
         
         # Создаём новый документ
         self.document_data = DocumentData()
+        
+        # Устанавливаем сохраненную дату, если она есть
+        if self._last_used_date:
+            self.document_data.implementation_date = self._last_used_date
+        
         self.current_additional_page = None  # Сбрасываем активную доп. страницу
         self.next_additional_page = 1        # Всегда начинаем с 1+ для новых кликов
         self.doc_info_widget.document_data = self.document_data
