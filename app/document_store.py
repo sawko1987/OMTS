@@ -1,9 +1,9 @@
 """
 Хранилище документов в SQLite
 """
-from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import date
+import json
 import sqlite3
 
 from app.database import DatabaseManager
@@ -25,7 +25,8 @@ class DocumentStore:
         if not document_data.document_number:
             raise ValueError("Документ должен иметь номер")
         
-        current_year = date.today().year
+        # Используем год из даты внедрения, если она установлена, иначе текущий год
+        document_year = document_data.implementation_date.year if document_data.implementation_date else date.today().year
         data_json = self.serializer.serialize(document_data)
         
         try:
@@ -36,7 +37,7 @@ class DocumentStore:
                 cursor.execute("""
                     SELECT id FROM documents 
                     WHERE document_number = ? AND year = ?
-                """, (document_data.document_number, current_year))
+                """, (document_data.document_number, document_year))
                 
                 existing = cursor.fetchone()
                 
@@ -53,7 +54,7 @@ class DocumentStore:
                     cursor.execute("""
                         INSERT INTO documents (document_number, year, data_json, output_file_path)
                         VALUES (?, ?, ?, ?)
-                    """, (document_data.document_number, current_year, data_json, output_file_path))
+                    """, (document_data.document_number, document_year, data_json, output_file_path))
                     return cursor.lastrowid
         except sqlite3.Error as e:
             print(f"Ошибка при сохранении документа: {e}")
@@ -108,6 +109,43 @@ class DocumentStore:
         except sqlite3.Error as e:
             print(f"Ошибка при получении списка документов: {e}")
             return []
+
+    def get_latest_part_usage(self, part_code: str) -> Optional[Dict[str, Any]]:
+        """Получить информацию о последнем документе, где использовалась деталь."""
+        normalized_part = (part_code or "").strip()
+        if not normalized_part:
+            return None
+
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT document_number, year, data_json, created_at
+                    FROM documents
+                    ORDER BY year DESC, document_number DESC, created_at DESC
+                """)
+
+                for row in cursor.fetchall():
+                    try:
+                        data = json.loads(row["data_json"])
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+
+                    part_changes = data.get("part_changes", [])
+                    if any(
+                        isinstance(item, dict) and (item.get("part", "") or "").strip() == normalized_part
+                        for item in part_changes
+                    ):
+                        return {
+                            "document_number": row["document_number"],
+                            "year": row["year"],
+                            "implementation_date": data.get("implementation_date"),
+                            "created_at": row["created_at"],
+                        }
+        except sqlite3.Error as e:
+            print(f"Ошибка при поиске использования детали: {e}")
+
+        return None
     
     def document_exists(self, document_number: int, year: Optional[int] = None) -> bool:
         """Проверить существование документа"""
@@ -141,4 +179,3 @@ class DocumentStore:
         except sqlite3.Error as e:
             print(f"Ошибка при удалении документа: {e}")
             return False
-

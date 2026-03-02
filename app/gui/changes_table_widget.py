@@ -223,6 +223,30 @@ class ChangesTableWidget(QWidget):
         self.update_product_info_label()
         # Обновляем фильтр деталей
         self.load_parts_list()
+
+    def set_selected_products(self, products: List[str]) -> None:
+        """Программно установить выбранные машины и синхронизировать UI."""
+        selected_products = []
+        selected_product_names = set()
+        for product in products:
+            normalized_name = (product or "").strip()
+            if not normalized_name or normalized_name in selected_product_names:
+                continue
+            selected_product_names.add(normalized_name)
+            selected_products.append(normalized_name)
+
+        self.document_data.products = list(selected_products)
+        self.machines_list.blockSignals(True)
+        for i in range(self.machines_list.count()):
+            item = self.machines_list.item(i)
+            if not item:
+                continue
+            product_name = item.data(Qt.UserRole)
+            item.setCheckState(Qt.Checked if product_name in selected_product_names else Qt.Unchecked)
+        self.machines_list.blockSignals(False)
+
+        self.update_product_info_label()
+        self.load_parts_list()
     
     def create_machine(self):
         """Создать новую машину (изделие)"""

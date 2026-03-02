@@ -14,6 +14,7 @@ import logging
 from app.models import DocumentData
 from app.gui.document_info_widget import DocumentInfoWidget
 from app.gui.changes_table_widget import ChangesTableWidget
+from app.gui.machine_selection_dialog import MachineSelectionDialog
 from app.gui.replacement_sets_editor_widget import ReplacementSetsEditorWidget
 from app.gui.settings_dialog import SettingsDialog
 from app.gui.product_parts_binding_dialog import ProductPartsBindingDialog
@@ -131,6 +132,7 @@ class MainWindow(QMainWindow):
         self.replacement_sets_widget = ReplacementSetsEditorWidget(
             self.catalog_loader,
             document_data=self.document_data,
+            document_store=self.document_store,
             history_store=self.history_store,
             product_store=self.product_store,
             get_current_additional_page=lambda: self.current_additional_page,
@@ -389,6 +391,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", error_msg)
             self.tabs.setCurrentIndex(1)
             return
+
+        if not self.ensure_products_selected_for_generation():
+            return
         
         # Получаем папку сохранения из настроек
         selected_dir = self.settings_manager.get_output_directory()
@@ -589,6 +594,34 @@ class MainWindow(QMainWindow):
                     f"Не удалось создать документ:\n\n{error_msg}\n\n"
                     f"Путь: {file_path}"
                 )
+
+    def ensure_products_selected_for_generation(self) -> bool:
+        """Проверить, что для документа выбрана хотя бы одна машина."""
+        if self.document_data.products:
+            return True
+
+        products = [name for _, name in self.product_store.get_all_products()]
+        if not products:
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Нет доступных машин. Сначала создайте хотя бы одну машину на вкладке 'Изменения материалов'."
+            )
+            self.tabs.setCurrentIndex(1)
+            return False
+
+        dialog = MachineSelectionDialog(products, self)
+        if not dialog.exec():
+            self.tabs.setCurrentIndex(1)
+            return False
+
+        selected_products = dialog.get_selected_products()
+        if not selected_products:
+            self.tabs.setCurrentIndex(1)
+            return False
+
+        self.changes_widget.set_selected_products(selected_products)
+        return True
     
     def new_document(self):
         """Создать новый документ"""
@@ -731,4 +764,3 @@ class MainWindow(QMainWindow):
             self.doc_info_widget.refresh()
             self.changes_widget.refresh()
             self.changes_widget.update_product_filter()
-

@@ -38,6 +38,7 @@ from app.gui.part_creation_dialog import MaterialEntryDialog
 from app.gui.material_selection_dialog import MaterialSelectionDialog
 from app.gui.replacement_dictionary_dialog import ReplacementDictionaryDialog
 from app.gui.set_selection_dialog import ReplacementSetSelectionDialog
+from app.document_store import DocumentStore
 from app.history_store import HistoryStore
 from app.product_store import ProductStore
 
@@ -57,6 +58,7 @@ class ReplacementSetsEditorWidget(QWidget):
         catalog_loader: CatalogLoader,
         parent: Optional[QWidget] = None,
         document_data: Optional[DocumentData] = None,
+        document_store: Optional[DocumentStore] = None,
         history_store: Optional[HistoryStore] = None,
         product_store: Optional[ProductStore] = None,
         get_current_additional_page: Optional[callable] = None,
@@ -65,6 +67,7 @@ class ReplacementSetsEditorWidget(QWidget):
         super().__init__(parent)
         self.catalog_loader = catalog_loader
         self.document_data = document_data
+        self.document_store = document_store
         self.history_store = history_store
         self.product_store = product_store
         self.get_current_additional_page = get_current_additional_page
@@ -103,6 +106,10 @@ class ReplacementSetsEditorWidget(QWidget):
         top.addWidget(self.btn_refresh)
         top.addStretch()
         layout.addLayout(top)
+
+        self.part_usage_label = QLabel("Выберите деталь, чтобы посмотреть историю использования")
+        self.part_usage_label.setStyleSheet("color: #666; font-style: italic;")
+        layout.addWidget(self.part_usage_label)
 
         splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(splitter, 1)
@@ -289,6 +296,7 @@ class ReplacementSetsEditorWidget(QWidget):
         self._dirty_name = False
         self._dirty_materials = False
         self._set_editor_enabled(False)
+        self._update_part_usage_label()
 
         if not self._current_part:
             return
@@ -337,6 +345,28 @@ class ReplacementSetsEditorWidget(QWidget):
             self.btn_add_to_document.setEnabled(
                 self.document_data is not None and self._current_part is not None
             )
+
+    def _update_part_usage_label(self) -> None:
+        """Показать, когда деталь последний раз добавлялась в документ."""
+        if not self._current_part or not self.document_store:
+            self.part_usage_label.setText("Выберите деталь, чтобы посмотреть историю использования")
+            return
+
+        usage_info = self.document_store.get_latest_part_usage(self._current_part)
+        if not usage_info:
+            self.part_usage_label.setText("Деталь ещё не добавлялась в документы")
+            return
+
+        date_text = usage_info.get("implementation_date") or usage_info.get("created_at") or ""
+        if len(date_text) >= 10 and date_text[4:5] == "-" and date_text[7:8] == "-":
+            date_text = f"{date_text[8:10]}.{date_text[5:7]}.{date_text[0:4]}"
+        if not date_text:
+            date_text = "дата неизвестна"
+
+        self.part_usage_label.setText(
+            f"Последнее добавление в документ: {date_text}, "
+            f"документ №{usage_info['document_number']}/{usage_info['year']}"
+        )
 
     # -----------------------
     # Pair selection / editor
@@ -1184,5 +1214,3 @@ class ReplacementSetsEditorWidget(QWidget):
         QMessageBox.information(
             self, "Успех", f"Деталь '{part}' успешно добавлена в документ"
         )
-
-
