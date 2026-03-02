@@ -738,6 +738,27 @@ class ReplacementSetsEditorWidget(QWidget):
                 QMessageBox.warning(self, "Ошибка", f"В наборе 'после' материал #{i}: заполните Наименование и Ед. изм.")
                 return False
 
+        from_names = {
+            (m.before_name or "").strip().casefold()
+            for m in self._from_materials
+            if (m.before_name or "").strip()
+        }
+        to_names = {
+            (m.before_name or "").strip().casefold()
+            for m in self._to_materials
+            if (m.before_name or "").strip()
+        }
+        duplicate_names = sorted(from_names & to_names)
+        if duplicate_names:
+            duplicate_list = "\n".join(f"- {name}" for name in duplicate_names)
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Для одной детали нельзя использовать одинаковые материалы "
+                f"в наборах 'до' и 'после':\n{duplicate_list}",
+            )
+            return False
+
         # 4) Сохраняем материалы
         ok = True
         if self._loaded_from_set_id:

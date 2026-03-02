@@ -64,6 +64,12 @@ class MaterialSelectionDialog(QDialog):
         self.workshop_filter.addItems(WORKSHOPS)
         self.workshop_filter.currentIndexChanged.connect(self.apply_filters)
         filter_layout.addWidget(self.workshop_filter)
+
+        filter_layout.addWidget(QLabel("Поиск:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Поиск по наименованию материала")
+        self.search_edit.textChanged.connect(self.apply_filters)
+        filter_layout.addWidget(self.search_edit, 1)
         
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
@@ -111,7 +117,7 @@ class MaterialSelectionDialog(QDialog):
     def load_materials(self):
         """Загрузить материалы для детали"""
         # Для обычного каталога — по детали, как раньше.
-        # Для наборов 'from'/'to' — общий каталог по типу (ожидаемое поведение пользователем).
+        # Для наборов 'from'/'to' — общий каталог по типу.
         if self.set_type in ("from", "to"):
             self.all_entries = self.catalog_loader.get_entries_by_set_type(self.set_type)
         else:
@@ -122,50 +128,62 @@ class MaterialSelectionDialog(QDialog):
     
     def apply_filters(self):
         """Применить фильтры к таблице"""
-        # Получаем значения фильтров
+        self._remember_visible_selections()
+
         workshop_index = self.workshop_filter.currentIndex()
         workshop_filter = "" if workshop_index == 0 else self.workshop_filter.currentText()
+        search_filter = self.search_edit.text().strip().casefold()
         
-        # Фильтруем записи
         filtered_entries = []
         for entry in self.all_entries:
-            # Фильтр по цеху
             if workshop_filter and entry.workshop != workshop_filter:
+                continue
+            if search_filter and search_filter not in (entry.before_name or "").casefold():
                 continue
             
             filtered_entries.append(entry)
         
-        # Заполняем таблицу
         self.table.setRowCount(len(filtered_entries))
         
         for row, entry in enumerate(filtered_entries):
-            # Чекбокс
             checkbox = QCheckBox()
             checkbox.setChecked(self._make_key(entry) in self._selected_keys)
             self.table.setCellWidget(row, 0, checkbox)
             
-            # Цех
             self.table.setItem(row, 1, QTableWidgetItem(entry.workshop))
-            
-            # Наименование материала
             self.table.setItem(row, 2, QTableWidgetItem(entry.before_name))
-            
-            # Ед. изм.
             self.table.setItem(row, 3, QTableWidgetItem(entry.unit))
             
-            # Норма
             norm_item = QTableWidgetItem(f"{entry.norm:.4f}")
             norm_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.table.setItem(row, 4, norm_item)
             
-            # Примечание
             self.table.setItem(row, 5, QTableWidgetItem(entry.comment or ""))
             
-            # Сохраняем entry в item для доступа
             for col in range(1, 6):
                 item = self.table.item(row, col)
                 if item:
                     item.setData(Qt.UserRole, entry)
+
+    def _remember_visible_selections(self) -> None:
+        for row in range(self.table.rowCount()):
+            checkbox = self.table.cellWidget(row, 0)
+            if not isinstance(checkbox, QCheckBox):
+                continue
+
+            item = self.table.item(row, 1)
+            if not item:
+                continue
+
+            entry = item.data(Qt.UserRole)
+            if not entry:
+                continue
+
+            key = self._make_key(entry)
+            if checkbox.isChecked():
+                self._selected_keys.add(key)
+            else:
+                self._selected_keys.discard(key)
 
     def _make_key(self, entry: CatalogEntry) -> tuple[str, str, str, str, str]:
         return (
@@ -177,16 +195,15 @@ class MaterialSelectionDialog(QDialog):
         )
 
     def _clone_for_use(self, entry: CatalogEntry) -> CatalogEntry:
-        # ВАЖНО: возвращаем КОПИЮ без id, чтобы сохранение набора не мутировало кэш каталога
-        # и не переносило материал между деталями.
-        # Норма устанавливается в 0, так как она разная для каждой детали и не должна копироваться из справочника.
+        # Возвращаем копию без id, чтобы сохранение набора не мутировало кэш каталога.
+        # Норма устанавливается в 0, так как она разная для каждой детали и не копируется из справочника.
         return CatalogEntry(
             part="",
             workshop=entry.workshop,
             role=entry.role,
             before_name=entry.before_name,
             unit=entry.unit,
-            norm=0.0,  # Норма не копируется из справочника, так как она разная для каждой детали
+            norm=0.0,
             comment=entry.comment or "",
             id=None,
             is_part_of_set=False,
@@ -195,19 +212,12 @@ class MaterialSelectionDialog(QDialog):
     
     def accept_selection(self):
         """Принять выбор и вернуть выбранные материалы"""
+        self._remember_visible_selections()
         self.selected_entries = []
-        self._selected_keys = set()
         
-        for row in range(self.table.rowCount()):
-            checkbox = self.table.cellWidget(row, 0)
-            if isinstance(checkbox, QCheckBox) and checkbox.isChecked():
-                # Получаем entry из любой ячейки строки
-                item = self.table.item(row, 1)
-                if item:
-                    entry = item.data(Qt.UserRole)
-                    if entry:
-                        self._selected_keys.add(self._make_key(entry))
-                        self.selected_entries.append(self._clone_for_use(entry))
+        for entry in self.all_entries:
+            if self._make_key(entry) in self._selected_keys:
+                self.selected_entries.append(self._clone_for_use(entry))
         
         if not self.selected_entries:
             QMessageBox.warning(self, "Предупреждение", "Выберите хотя бы один материал")
@@ -218,4 +228,3 @@ class MaterialSelectionDialog(QDialog):
     def get_selected_entries(self) -> List[CatalogEntry]:
         """Получить выбранные материалы"""
         return self.selected_entries
-
