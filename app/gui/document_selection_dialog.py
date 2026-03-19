@@ -4,7 +4,7 @@
 from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QLabel
+    QTableWidget, QTableWidgetItem, QHeaderView, QLabel, QLineEdit
 )
 from PySide6.QtCore import Qt
 from datetime import datetime
@@ -20,6 +20,7 @@ class DocumentSelectionDialog(QDialog):
         self.document_store = document_store
         self.selected_document_number = None
         self.selected_year = None
+        self.all_documents = []
         self.setWindowTitle("Открыть документ")
         self.setMinimumSize(500, 400)
         self.init_ui()
@@ -33,6 +34,15 @@ class DocumentSelectionDialog(QDialog):
         title = QLabel("Выберите документ для открытия:")
         title.setStyleSheet("font-size: 14px; font-weight: bold;")
         layout.addWidget(title)
+
+        # Поиск по документам
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Поиск:"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Введите номер, год или часть имени файла")
+        self.search_edit.textChanged.connect(self.apply_filter)
+        search_layout.addWidget(self.search_edit)
+        layout.addLayout(search_layout)
         
         # Таблица документов
         self.table = QTableWidget()
@@ -54,6 +64,7 @@ class DocumentSelectionDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.doubleClicked.connect(self.accept)
+        self.table.itemSelectionChanged.connect(self.update_open_button_state)
         
         layout.addWidget(self.table)
         
@@ -74,10 +85,13 @@ class DocumentSelectionDialog(QDialog):
     
     def load_documents(self):
         """Загрузить список документов"""
-        documents = self.document_store.get_all_documents()
-        
+        self.all_documents = self.document_store.get_all_documents()
+        self.populate_table(self.all_documents)
+
+    def populate_table(self, documents):
+        """Заполнить таблицу документами"""
         self.table.setRowCount(len(documents))
-        
+
         for row, (doc_number, year, created_at, file_path) in enumerate(documents):
             # Номер
             number_item = QTableWidgetItem(str(doc_number))
@@ -108,10 +122,43 @@ class DocumentSelectionDialog(QDialog):
             file_name = Path(file_path).name if file_path else ""
             file_item = QTableWidgetItem(file_name)
             self.table.setItem(row, 3, file_item)
-        
-        # Сортируем по номеру (уже отсортировано в запросе)
+
         if documents:
             self.table.selectRow(0)
+        else:
+            self.table.clearSelection()
+
+        self.update_open_button_state()
+
+    def apply_filter(self):
+        """Отфильтровать документы по строке поиска"""
+        search_text = self.search_edit.text().strip().casefold()
+
+        if not search_text:
+            filtered_documents = self.all_documents
+        else:
+            filtered_documents = [
+                document for document in self.all_documents
+                if self.document_matches_search(document, search_text)
+            ]
+
+        self.populate_table(filtered_documents)
+
+    def document_matches_search(self, document, search_text: str) -> bool:
+        """Проверить, соответствует ли документ строке поиска"""
+        doc_number, year, _, file_path = document
+        file_name = Path(file_path).name if file_path else ""
+
+        searchable_values = (
+            str(doc_number),
+            str(year),
+            file_name.casefold(),
+        )
+        return any(search_text in value for value in searchable_values)
+
+    def update_open_button_state(self):
+        """Обновить доступность кнопки открытия"""
+        self.btn_open.setEnabled(self.table.currentRow() >= 0)
     
     def get_selected_document(self):
         """Получить выбранный документ: (document_number, year)"""
