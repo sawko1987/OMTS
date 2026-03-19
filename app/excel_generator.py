@@ -509,6 +509,21 @@ class ExcelGenerator:
             if not cell.number_format or cell.number_format == 'General':
                 cell.number_format = "DD.MM.YYYY"
             cell.value = doc_data.implementation_date
+            
+            # Обновление года в блоке "Утверждаю" (обычно справа вверху)
+            year = doc_data.implementation_date.year
+            # Ищем ячейку с годом в первых 5 строках
+            for row in range(1, 6):
+                for col in range(8, 16): # Ищем справа (H..O)
+                    cell = get_merged_cell_value(sheet, row, col)
+                    if cell.value and isinstance(cell.value, str):
+                        # Ищем паттерн с годом и "г."
+                        import re
+                        if re.search(r'\d{4}\s*г\.', cell.value):
+                            new_text = re.sub(r'\d{4}', str(year), cell.value)
+                            cell.value = new_text
+                            break
+
         
         # Срок действия (строка 9, колонки 8-14 - текст "Срок действия: [значение]")
         if doc_data.validity_period:
