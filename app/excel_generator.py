@@ -491,6 +491,10 @@ class ExcelGenerator:
     
     def fill_header(self, sheet, doc_data: DocumentData):
         """Заполнить шапку документа"""
+        # Фиксированная должность в блоке "Утверждаю"
+        approver_role_cell = get_merged_cell_value(sheet, 2, 11)  # K2
+        approver_role_cell.value = "1й зам.директора"
+
         # Номер документа (в заголовке, строка 5)
         for col in range(1, 16):
             cell = get_merged_cell_value(sheet, 5, col)
@@ -539,14 +543,11 @@ class ExcelGenerator:
             cell = get_merged_cell_value(sheet, 10, 5)
             cell.value = ", ".join(doc_data.products)
         
-        # Причина (строка 11, колонка B - текст "Причина:", колонка E - причина)
-        if doc_data.reason:
-            # Записываем "Причина:" в колонку B (колонки 1-3)
-            cell = get_merged_cell_value(sheet, 11, 2)
-            cell.value = "Причина:"
-            # Записываем причину в колонку E (колонки 5-7)
-            cell = get_merged_cell_value(sheet, 11, 5)
-            cell.value = doc_data.reason
+        # Причина должна отображаться всегда, даже если значение не заполнено
+        cell = get_merged_cell_value(sheet, 11, 2)
+        cell.value = "Причина:"
+        cell = get_merged_cell_value(sheet, 11, 5)
+        cell.value = (doc_data.reason or "").strip()
         
         # Заключение ТКО (строки 10-11, колонки 8-14)
         # Заполняется вручную, поэтому оставляем только текст по умолчанию
@@ -608,6 +609,18 @@ class ExcelGenerator:
                     col = workshop_cols[workshop]
                     cell = get_merged_cell_value(sheet, mark_row, col)
                     cell.value = "х"
+
+        # В колонке ПДО отметка должна стоять всегда
+        pdo_col = workshop_cols.get("ПЗУ")
+        if pdo_col:
+            cell = get_merged_cell_value(sheet, mark_row, pdo_col)
+            cell.value = "х"
+        else:
+            findings = self.config.get("findings", {})
+            vruhcheno = findings.get("vruhcheno_marks", {})
+            pdo_data = vruhcheno.get("ПДО") or vruhcheno.get("Кладовая ПДО")
+            if isinstance(pdo_data, list) and len(pdo_data) >= 3:
+                sheet[pdo_data[2]].value = "х"
     
     def fill_changes_table(self, sheet, doc_data: DocumentData):
         """Заполнить таблицу изменений на первом листе
