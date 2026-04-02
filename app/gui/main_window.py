@@ -57,6 +57,16 @@ class MainWindow(QMainWindow):
         
         self.init_ui()
         self.load_catalog()
+
+    def _apply_last_used_date(self):
+        """Установить сохранённую дату внедрения в новый документ текущего сеанса."""
+        if self._last_used_date:
+            self.document_data.implementation_date = self._last_used_date
+
+    def _on_implementation_date_changed(self, qdate):
+        """Сохранять последнюю выбранную дату до перезапуска приложения."""
+        if qdate and qdate.isValid():
+            self._last_used_date = qdate.toPython()
     
     def init_database(self):
         """Инициализировать базу данных"""
@@ -115,6 +125,7 @@ class MainWindow(QMainWindow):
         
         # Вкладка 1: Реквизиты документа
         self.doc_info_widget = DocumentInfoWidget(self.document_data, self.product_store, self.db_manager)
+        self.doc_info_widget.date_edit.dateChanged.connect(self._on_implementation_date_changed)
         self.tabs.addTab(self.doc_info_widget, "Реквизиты документа")
         
         # Вкладка 2: Таблица изменений
@@ -664,6 +675,7 @@ class MainWindow(QMainWindow):
                 loaded_data = self.document_store.load_document(document_number, year)
                 if loaded_data:
                     self.document_data = loaded_data
+                    self._last_used_date = self.document_data.implementation_date
                     # Определяем максимальный номер доп. страницы для восстановления счётчика
                     max_page = 0
                     pages_found = []
@@ -756,6 +768,7 @@ class MainWindow(QMainWindow):
         
         if reply == QMessageBox.Yes:
             self.document_data = DocumentData()
+            self._apply_last_used_date()
             self.current_additional_page = None  # Сбрасываем активную доп. страницу
             self.next_additional_page = 1        # Следующий клик создаст страницу 1+
             self.doc_info_widget.document_data = self.document_data

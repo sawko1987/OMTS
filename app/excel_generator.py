@@ -493,6 +493,8 @@ class ExcelGenerator:
         """Заполнить шапку документа"""
         # Фиксированная должность в блоке "Утверждаю"
         approver_role_cell = get_merged_cell_value(sheet, 2, 11)  # K2
+        approver_name_cell = get_merged_cell_value(sheet, 3, 12)  # L3
+        approver_name_cell.value = "Р‘РёСЂСЋРєРѕРІ Рђ.РЎ."
         approver_role_cell.value = "1й зам.директора"
 
         # Номер документа (в заголовке, строка 5)
