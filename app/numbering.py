@@ -68,8 +68,9 @@ class NumberingManager:
     def get_current_number(self, year: Optional[int] = None) -> int:
         """Получить текущий номер (без увеличения)
         
-        Проверяет как таблицу numbering, так и реальные документы в таблице documents,
-        чтобы вернуть правильный следующий номер.
+        Возвращает следующий номер из счётчика numbering.
+        Существующие документы не поднимают счётчик автоматически: если номер задан
+        вручную ниже уже сохранённых документов, приложение проверит перезапись при генерации.
         
         Args:
             year: Год для нумерации. Если не указан, используется текущий год.
@@ -87,25 +88,9 @@ class NumberingManager:
                     numbering_row = cursor.fetchone()
                     numbering_number = numbering_row['last_number'] + 1 if numbering_row else None
                     
-                    # Проверяем реальные документы в таблице documents
-                    cursor.execute("""
-                        SELECT MAX(document_number) as max_number 
-                        FROM documents 
-                        WHERE year = ?
-                    """, (target_year,))
-                    documents_row = cursor.fetchone()
-                    documents_max = documents_row['max_number'] if documents_row and documents_row['max_number'] else None
-                    
-                    # Используем максимальное значение из двух источников
-                    if numbering_number is not None and documents_max is not None:
-                        result = max(numbering_number, documents_max + 1)
-                        logger.info(f"[get_current_number] Для года {target_year}: numbering={numbering_number}, documents_max={documents_max}, возвращаем {result}")
-                    elif numbering_number is not None:
+                    if numbering_number is not None:
                         result = numbering_number
-                        logger.info(f"[get_current_number] Для года {target_year}: только numbering={numbering_number}, возвращаем {result}")
-                    elif documents_max is not None:
-                        result = documents_max + 1
-                        logger.info(f"[get_current_number] Для года {target_year}: только documents_max={documents_max}, возвращаем {result}")
+                        logger.info(f"[get_current_number] Для года {target_year}: numbering={numbering_number}, возвращаем {result}")
                     else:
                         # Если записей нет, возвращаем начальный номер из настроек
                         starting_number = self.settings_manager.get_starting_number()
@@ -227,14 +212,19 @@ class NumberingManager:
             try:
                 with self.db_manager.get_connection() as conn:
                     cursor = conn.cursor()
+                    cursor.execute("SELECT last_number FROM numbering WHERE year = ?", (target_year,))
+                    row = cursor.fetchone()
+                    last_number = row['last_number'] if row else 0
+                    number_to_store = max(last_number, number)
+
                     cursor.execute(
                         "UPDATE numbering SET last_number = ? WHERE year = ?",
-                        (number, target_year)
+                        (number_to_store, target_year)
                     )
                     if cursor.rowcount == 0:
                         cursor.execute(
                             "INSERT INTO numbering (year, last_number) VALUES (?, ?)",
-                            (target_year, number)
+                            (target_year, number_to_store)
                         )
                     conn.commit()
             except Exception:
@@ -250,5 +240,6 @@ class NumberingManager:
             number: Номер документа
             year: Год для нумерации
         """
-        data = {"year": year, "last": number}
+        current_number = self._get_current_number_json(year)
+        data = {"year": year, "last": max(current_number - 1, number)}
         self._save_json(data)

@@ -185,11 +185,6 @@ class SettingsDialog(QDialog):
             original_current_number = self.numbering_manager.get_current_number()
             if current_number != original_current_number:
                 self.numbering_manager.set_number(current_number)
-                QMessageBox.information(
-                    self,
-                    "Номер установлен",
-                    f"Следующий номер извещения установлен: {current_number}"
-                )
             
             super().accept()
         except Exception as e:
