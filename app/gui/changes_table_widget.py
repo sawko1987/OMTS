@@ -15,6 +15,7 @@ from app.models import DocumentData, PartChanges, MaterialChange, CatalogEntry, 
 from app.catalog_loader import CatalogLoader
 from app.history_store import HistoryStore
 from app.product_store import ProductStore
+from app.banned_replacements_store import BannedReplacementsStore  # [BAN_FEATURE]
 from app.gui.part_creation_dialog import PartCreationDialog
 from app.gui.set_selection_dialog import ReplacementSetSelectionDialog
 
@@ -31,12 +32,14 @@ class ChangesTableWidget(QWidget):
     def __init__(self, document_data: DocumentData, 
                  catalog_loader: CatalogLoader = None,
                  history_store: HistoryStore = None,
-                 product_store: ProductStore = None):
+                 product_store: ProductStore = None,
+                 banned_store: BannedReplacementsStore = None):  # [BAN_FEATURE]
         super().__init__()
         self.document_data = document_data
         self.catalog_loader = catalog_loader or CatalogLoader()
         self.history_store = history_store or HistoryStore()
         self.product_store = product_store
+        self.banned_store = banned_store  # [BAN_FEATURE]
         
         # Таймер для debounce поиска (задержка 300мс)
         self.search_timer = QTimer()
@@ -147,6 +150,14 @@ class ChangesTableWidget(QWidget):
         self.btn_delete_part_from_db = QPushButton("Удалить деталь из БД")
         self.btn_delete_part_from_db.clicked.connect(self.delete_part_from_database)
         add_layout.addWidget(self.btn_delete_part_from_db)
+        
+        # [BAN_FEATURE] Кнопка запрета замены
+        self.btn_ban_material = QPushButton("⛔ Запретить замену")
+        self.btn_ban_material.setToolTip(
+            "Пометить выбранный материал как запрещённый к замене (по решению конструктора)"
+        )
+        self.btn_ban_material.clicked.connect(self.ban_selected_material)
+        add_layout.addWidget(self.btn_ban_material)
         
         control_layout.addLayout(add_layout)
         layout.addLayout(control_layout)
@@ -1038,6 +1049,24 @@ class ChangesTableWidget(QWidget):
                             if widget:
                                 widget.setStyleSheet(f"background-color: rgb({light_blue.red()}, {light_blue.green()}, {light_blue.blue()});")
                 
+                # [BAN_FEATURE] Подсветка запрещённых материалов (красным, поверх остальных цветов)
+                after_name = material.after_name or ""
+                if self.banned_store and self.banned_store.is_banned(material.catalog_entry, after_name):
+                    ban_color = QColor(255, 200, 200)  # Светло-красный
+                    for col in range(9):
+                        item = self.table.item(row, col)
+                        if item:
+                            item.setBackground(ban_color)
+                            ban_info = self.banned_store.get_ban_info(material.catalog_entry, after_name)
+                            tooltip = f"⛔ Замена '{material.catalog_entry.before_name}' → '{after_name}' запрещена конструктором!"
+                            if ban_info and ban_info.reason:
+                                tooltip += f"\nПричина: {ban_info.reason}"
+                            item.setToolTip(tooltip)
+                        else:
+                            widget = self.table.cellWidget(row, col)
+                            if widget:
+                                widget.setStyleSheet(f"background-color: rgb(255, 200, 200);")
+                
                 row += 1
     
     def on_checkbox_changed(self, row: int, checked: bool):
@@ -1422,6 +1451,66 @@ class ChangesTableWidget(QWidget):
                 self.load_parts_list()
             else:
                 QMessageBox.warning(self, "Ошибка", "Не удалось обновить набор материалов")
+    
+    # [BAN_FEATURE]
+    def ban_selected_material(self):
+        """Запретить или снять запрет на замену для выбранного материала"""
+        current_row = self.table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "Ошибка", "Выберите строку с материалом")
+            return
+        
+        part_item = self.table.item(current_row, 0)
+        if not part_item:
+            return
+        
+        data = part_item.data(Qt.UserRole)
+        if isinstance(data, list):
+            data = tuple(data)
+        if not data or not isinstance(data, tuple) or len(data) != 2:
+            QMessageBox.warning(self, "Ошибка", "Не удалось определить данные материала")
+            return
+        
+        _, material = data
+        entry = material.catalog_entry
+        if not entry:
+            QMessageBox.warning(self, "Ошибка", "Не удалось получить запись каталога")
+            return
+        
+        # Читаем after_name из колонки 7
+        after_name = ""
+        after_widget = self.table.cellWidget(current_row, 7)
+        if isinstance(after_widget, QComboBox):
+            after_name = after_widget.currentText().strip()
+        else:
+            after_item = self.table.item(current_row, 7)
+            if after_item:
+                after_name = after_item.text().strip()
+        
+        if not after_name:
+            QMessageBox.warning(self, "Ошибка", "Для запрета замены необходимо указать материал 'после' в колонке 7")
+            return
+        
+        if self.banned_store and self.banned_store.is_banned(entry, after_name):
+            reply = QMessageBox.question(
+                self, "Снять запрет",
+                f"Снять запрет на замену '{entry.before_name}' → '{after_name}' для детали '{entry.part}'?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.banned_store.unban(entry, after_name)
+                self.refresh()
+        else:
+            reply = QMessageBox.question(
+                self, "Запретить замену",
+                f"Запретить замену '{entry.before_name}' → '{after_name}'?\n"
+                f"Деталь: {entry.part}, Цех: {entry.workshop}",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                if self.banned_store:
+                    self.banned_store.ban(entry, after_name)
+                    self.refresh()
     
     def delete_part_from_database(self):
         """Удалить деталь из базы данных"""

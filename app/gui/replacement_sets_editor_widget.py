@@ -8,7 +8,7 @@ from typing import Optional
 import logging
 
 from PySide6.QtCore import Qt, QEvent
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeyEvent, QColor  # [BAN_FEATURE]
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.catalog_loader import CatalogLoader
+from app.banned_replacements_store import BannedReplacementsStore  # [BAN_FEATURE]
 from app.models import (
     CatalogEntry,
     DocumentData,
@@ -61,6 +62,7 @@ class ReplacementSetsEditorWidget(QWidget):
         document_store: Optional[DocumentStore] = None,
         history_store: Optional[HistoryStore] = None,
         product_store: Optional[ProductStore] = None,
+        banned_store: BannedReplacementsStore = None,  # [BAN_FEATURE]
         get_current_additional_page: Optional[callable] = None,
         changes_widget: Optional[QWidget] = None,
     ):
@@ -70,6 +72,7 @@ class ReplacementSetsEditorWidget(QWidget):
         self.document_store = document_store
         self.history_store = history_store
         self.product_store = product_store
+        self.banned_store = banned_store  # [BAN_FEATURE]
         self.get_current_additional_page = get_current_additional_page
         self.changes_widget = changes_widget
         self._current_part: Optional[str] = None
@@ -427,6 +430,7 @@ class ReplacementSetsEditorWidget(QWidget):
 
         self._render_table(self.from_table, self._from_materials, is_from=True)
         self._render_table(self.to_table, self._to_materials, is_from=False)
+        self._highlight_banned_materials()  # [BAN_FEATURE]
 
         self._set_editor_enabled(True)
 
@@ -474,7 +478,51 @@ class ReplacementSetsEditorWidget(QWidget):
             table.setItem(row, 2, u)
             table.setItem(row, 3, norm)
         table.blockSignals(False)
-
+    
+    # [BAN_FEATURE]
+    def _highlight_banned_materials(self) -> None:
+        """Подсветить красным запрещённые замены в таблицах 'from' и 'to'"""
+        if not self.banned_store:
+            return
+        
+        # Подсветка таблицы "from" (материал 'до' имеет хоть какой-то запрет)
+        for row in range(self.from_table.rowCount()):
+            if row < len(self._from_materials):
+                from_entry = self._from_materials[row]
+                if self.banned_store.is_banned(from_entry):
+                    ban_color = QColor(255, 200, 200)
+                    for col in range(4):
+                        item = self.from_table.item(row, col)
+                        if item:
+                            item.setBackground(ban_color)
+                            tooltip = "⛔ Замена запрещена конструктором!"
+                            item.setToolTip(tooltip)
+        
+        # Подсветка таблицы "to" (конкретная пара from -> to запрещена)
+        for row in range(self.to_table.rowCount()):
+            if row < len(self._to_materials):
+                to_entry = self._to_materials[row]
+                banned = False
+                tooltip_text = ""
+                if row < len(self._from_materials):
+                    from_entry = self._from_materials[row]
+                    if self.banned_store.is_banned(from_entry, to_entry.before_name):
+                        banned = True
+                        ban_info = self.banned_store.get_ban_info(from_entry, to_entry.before_name)
+                        tooltip_text = f"⛔ Замена '{from_entry.before_name}' → '{to_entry.before_name}' запрещена!"
+                        if ban_info and ban_info.reason:
+                            tooltip_text += f"\nПричина: {ban_info.reason}"
+                if not banned and self.banned_store.is_banned(to_entry):
+                    banned = True
+                    tooltip_text = "⛔ Замена запрещена конструктором!"
+                if banned:
+                    ban_color = QColor(255, 200, 200)
+                    for col in range(4):
+                        item = self.to_table.item(row, col)
+                        if item:
+                            item.setBackground(ban_color)
+                            item.setToolTip(tooltip_text)
+    
     def _on_material_item_changed(self, item: QTableWidgetItem, is_from: bool) -> None:
         entry = item.data(Qt.UserRole)
         if not entry:
@@ -513,6 +561,7 @@ class ReplacementSetsEditorWidget(QWidget):
         mats.pop(row)
         self._dirty_materials = True
         self._render_table(table, mats, is_from=is_from)
+        self._highlight_banned_materials()  # [BAN_FEATURE]
 
     def _remove_selected_multi(self, is_from: bool) -> None:
         table = self.from_table if is_from else self.to_table
@@ -537,6 +586,7 @@ class ReplacementSetsEditorWidget(QWidget):
 
         self._dirty_materials = True
         self._render_table(table, mats, is_from=is_from)
+        self._highlight_banned_materials()  # [BAN_FEATURE]
 
     def _add_material(self, is_from: bool, from_catalog: bool) -> None:
         if not self._current_part:
@@ -563,6 +613,7 @@ class ReplacementSetsEditorWidget(QWidget):
 
         self._dirty_materials = True
         self._render_table(table, mats, is_from=is_from)
+        self._highlight_banned_materials()  # [BAN_FEATURE]
 
     def _pick_replacement_for_selected_from(self) -> None:
         if not self._current_part:
@@ -618,6 +669,7 @@ class ReplacementSetsEditorWidget(QWidget):
 
         self._dirty_materials = True
         self._render_table(self.to_table, self._to_materials, is_from=False)
+        self._highlight_banned_materials()  # [BAN_FEATURE]
 
     # -----------------------
     # Operations (new/copy/delete/save/split)
@@ -856,6 +908,15 @@ class ReplacementSetsEditorWidget(QWidget):
                     continue
 
                 added_materials_keys.add(material_key)
+
+                # [BAN_FEATURE] Проверка на запрещённую замену
+                if idx < len(to_materials) and self.banned_store and self.banned_store.is_banned(from_entry, to_materials[idx].before_name):
+                    QMessageBox.warning(self, "Ошибка",
+                        f"Замена '{from_entry.before_name}' → '{to_materials[idx].before_name}' "
+                        f"для детали '{part}' запрещена конструктором!\n\n"
+                        f"Снимите запрет во вкладке «Изменения материалов».")
+                    return
+
                 material_change = MaterialChange(catalog_entry=from_entry, is_changed=True)
 
                 if idx < len(to_materials):
@@ -1134,6 +1195,14 @@ class ReplacementSetsEditorWidget(QWidget):
                     continue
 
                 added_materials_keys.add(material_key)
+
+                # [BAN_FEATURE] Проверка на запрещённую замену
+                if idx < len(to_materials) and self.banned_store and self.banned_store.is_banned(from_entry, to_materials[idx].before_name):
+                    QMessageBox.warning(self, "Ошибка",
+                        f"Замена '{from_entry.before_name}' → '{to_materials[idx].before_name}' "
+                        f"для детали '{part}' запрещена конструктором!\n\n"
+                        f"Снимите запрет во вкладке «Изменения материалов».")
+                    return
 
                 # Создаём изменение для материала "from"
                 # ВСЕ материалы "from" должны иметь is_changed=True, чтобы попасть в левую колонку

@@ -76,3 +76,9 @@ class MaterialSetItem:
     catalog_entry_id: int = 0  # ID записи каталога
     order_index: int = 0  # Порядок материала в наборе
 
+@dataclass  # [BAN_FEATURE]
+class BannedReplacementInfo:
+    """Информация о запрете замены материала"""
+    reason: str = ""
+    banned_at: str = ""
+

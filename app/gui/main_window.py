@@ -24,6 +24,7 @@ from app.database import DatabaseManager
 from app.product_store import ProductStore
 from app.catalog_loader import CatalogLoader
 from app.history_store import HistoryStore
+from app.banned_replacements_store import BannedReplacementsStore  # [BAN_FEATURE]
 from app.migrate_to_sqlite import migrate_all
 from app.settings_manager import SettingsManager
 from app.document_store import DocumentStore
@@ -43,6 +44,7 @@ class MainWindow(QMainWindow):
         
         # Сохраняем последнюю использованную дату для использования при создании нового документа
         self._last_used_date = None
+        self._last_used_validity_period = None
         
         # Инициализация БД (до создания UI)
         self.init_database()
@@ -52,6 +54,7 @@ class MainWindow(QMainWindow):
         self.product_store = ProductStore(self.db_manager)
         self.catalog_loader = CatalogLoader(self.db_manager)
         self.history_store = HistoryStore(self.db_manager)
+        self.banned_store = BannedReplacementsStore(self.db_manager)  # [BAN_FEATURE]
         self.settings_manager = SettingsManager()
         self.document_store = DocumentStore(self.db_manager, self.catalog_loader)
         
@@ -59,14 +62,22 @@ class MainWindow(QMainWindow):
         self.load_catalog()
 
     def _apply_last_used_date(self):
-        """Установить сохранённую дату внедрения в новый документ текущего сеанса."""
+        """Установить сохранённые реквизиты в новый документ текущего сеанса."""
         if self._last_used_date:
             self.document_data.implementation_date = self._last_used_date
+        if self._last_used_validity_period:
+            self.document_data.validity_period = self._last_used_validity_period
 
     def _on_implementation_date_changed(self, qdate):
         """Сохранять последнюю выбранную дату до перезапуска приложения."""
         if qdate and qdate.isValid():
             self._last_used_date = qdate.toPython()
+
+    def _on_validity_period_changed(self, text):
+        """Сохранять последний введённый срок действия до перезапуска приложения."""
+        value = text.strip()
+        if value:
+            self._last_used_validity_period = value
     
     def init_database(self):
         """Инициализировать базу данных"""
@@ -126,6 +137,7 @@ class MainWindow(QMainWindow):
         # Вкладка 1: Реквизиты документа
         self.doc_info_widget = DocumentInfoWidget(self.document_data, self.product_store, self.db_manager)
         self.doc_info_widget.date_edit.dateChanged.connect(self._on_implementation_date_changed)
+        self.doc_info_widget.validity_edit.textChanged.connect(self._on_validity_period_changed)
         self.tabs.addTab(self.doc_info_widget, "Реквизиты документа")
         
         # Вкладка 2: Таблица изменений
@@ -133,7 +145,8 @@ class MainWindow(QMainWindow):
             self.document_data,
             self.catalog_loader,
             self.history_store,
-            self.product_store
+            self.product_store,
+            banned_store=self.banned_store  # [BAN_FEATURE]
         )
         # Передаём функцию для получения текущего номера доп. страницы
         self.changes_widget.get_current_additional_page = lambda: self.current_additional_page
@@ -146,6 +159,7 @@ class MainWindow(QMainWindow):
             document_store=self.document_store,
             history_store=self.history_store,
             product_store=self.product_store,
+            banned_store=self.banned_store,  # [BAN_FEATURE]
             get_current_additional_page=lambda: self.current_additional_page,
             changes_widget=self.changes_widget
         )
@@ -362,6 +376,8 @@ class MainWindow(QMainWindow):
         # Сохраняем дату при обновлении данных (на случай, если пользователь изменил дату)
         if self.document_data.implementation_date:
             self._last_used_date = self.document_data.implementation_date
+        if self.document_data.validity_period:
+            self._last_used_validity_period = self.document_data.validity_period
         
         # Валидация
         if not self.document_data.implementation_date:
@@ -403,9 +419,30 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex(1)
             return
 
-        if not self.ensure_products_selected_for_generation():
+        # [BAN_FEATURE] Проверка на запрещённые замены
+        banned_found = []
+        for part_change in self.document_data.part_changes:
+            for material in part_change.materials:
+                if material.is_changed and material.after_name:
+                    after_name = material.after_name.strip()
+                    if self.banned_store.is_banned(material.catalog_entry, after_name):
+                        banned_found.append(
+                            f"{part_change.part}: {material.catalog_entry.before_name} → {after_name}"
+                        )
+        if banned_found:
+            error_msg = "Обнаружены запрещённые конструктором замены:\n\n"
+            for item in banned_found[:10]:
+                error_msg += f"  ⛔ {item}\n"
+            if len(banned_found) > 10:
+                error_msg += f"  ... и ещё {len(banned_found) - 10}\n"
+            error_msg += "\nСнимите запрет во вкладке «Изменения материалов» или уберите замену для указанных материалов."
+            QMessageBox.warning(self, "Ошибка", error_msg)
+            self.tabs.setCurrentIndex(1)
             return
         
+        if not self.ensure_products_selected_for_generation():
+            return
+            
         # Получаем папку сохранения из настроек
         selected_dir = self.settings_manager.get_output_directory()
         
@@ -650,9 +687,7 @@ class MainWindow(QMainWindow):
         # Создаём новый документ
         self.document_data = DocumentData()
         
-        # Устанавливаем сохраненную дату, если она есть
-        if self._last_used_date:
-            self.document_data.implementation_date = self._last_used_date
+        self._apply_last_used_date()
         
         self.current_additional_page = None  # Сбрасываем активную доп. страницу
         self.next_additional_page = 1        # Всегда начинаем с 1+ для новых кликов
@@ -676,6 +711,7 @@ class MainWindow(QMainWindow):
                 if loaded_data:
                     self.document_data = loaded_data
                     self._last_used_date = self.document_data.implementation_date
+                    self._last_used_validity_period = self.document_data.validity_period
                     # Определяем максимальный номер доп. страницы для восстановления счётчика
                     max_page = 0
                     pages_found = []

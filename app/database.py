@@ -101,6 +101,21 @@ class DatabaseManager:
                 )
             """)
             
+            # [BAN_FEATURE] Таблица запрещённых замен
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS banned_replacements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    part_code TEXT NOT NULL,
+                    workshop TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    before_name TEXT NOT NULL,
+                    after_name TEXT NOT NULL DEFAULT '',
+                    reason TEXT DEFAULT '',
+                    banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(part_code, workshop, role, before_name, after_name)
+                )
+            """)
+            
             # Таблица нумерации документов
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS numbering (
@@ -182,6 +197,27 @@ class DatabaseManager:
         
         if 'replacement_set_id' not in columns:
             cursor.execute("ALTER TABLE catalog_entries ADD COLUMN replacement_set_id INTEGER")
+        
+        # [BAN_FEATURE] Миграция banned_replacements (добавление after_name)
+        cursor.execute("PRAGMA table_info(banned_replacements)")
+        ban_columns = [row[1] for row in cursor.fetchall()]
+        if 'after_name' not in ban_columns:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS banned_replacements_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    part_code TEXT NOT NULL,
+                    workshop TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    before_name TEXT NOT NULL,
+                    after_name TEXT NOT NULL DEFAULT '',
+                    reason TEXT DEFAULT '',
+                    banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(part_code, workshop, role, before_name, after_name)
+                )
+            """)
+            cursor.execute("INSERT OR IGNORE INTO banned_replacements_new SELECT *, '' FROM banned_replacements")
+            cursor.execute("DROP TABLE banned_replacements")
+            cursor.execute("ALTER TABLE banned_replacements_new RENAME TO banned_replacements")
     
     def _create_indexes(self, cursor: sqlite3.Cursor):
         """Создать индексы для оптимизации запросов"""
@@ -191,6 +227,7 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_product_parts_product ON product_parts(product_id)",
             "CREATE INDEX IF NOT EXISTS idx_product_parts_part ON product_parts(part_code)",
             "CREATE INDEX IF NOT EXISTS idx_replacements_lookup ON material_replacements(part_code, workshop, role, before_name)",
+            "CREATE INDEX IF NOT EXISTS idx_banned_part_code ON banned_replacements(part_code)",
             "CREATE INDEX IF NOT EXISTS idx_catalog_is_part_of_set ON catalog_entries(is_part_of_set)",
             "CREATE INDEX IF NOT EXISTS idx_catalog_replacement_set_id ON catalog_entries(replacement_set_id)",
             "CREATE INDEX IF NOT EXISTS idx_replacement_sets_part_code ON material_replacement_sets(part_code)",

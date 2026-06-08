@@ -7,10 +7,12 @@ from PySide6.QtWidgets import (
     QMessageBox, QLabel, QComboBox, QLineEdit
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor  # [BAN_FEATURE]
 from typing import List, Optional
 
 from app.models import CatalogEntry
 from app.catalog_loader import CatalogLoader
+from app.banned_replacements_store import BannedReplacementsStore  # [BAN_FEATURE]
 from app.config import WORKSHOPS
 
 
@@ -23,6 +25,7 @@ class MaterialSelectionDialog(QDialog):
         catalog_loader: CatalogLoader = None,
         parent=None,
         set_type: Optional[str] = None,
+        banned_store: BannedReplacementsStore = None,  # [BAN_FEATURE]
     ):
         super().__init__(parent)
         if set_type == "from":
@@ -34,6 +37,7 @@ class MaterialSelectionDialog(QDialog):
         self.setMinimumSize(800, 600)
         self.part_code = part_code
         self.catalog_loader = catalog_loader or CatalogLoader()
+        self.banned_store = banned_store  # [BAN_FEATURE]
         self.set_type = set_type  # 'from' | 'to' | None
         self._selected_keys: set[tuple[str, str, str, str, str]] = set()
         self.selected_entries: List[CatalogEntry] = []
@@ -164,6 +168,14 @@ class MaterialSelectionDialog(QDialog):
                 item = self.table.item(row, col)
                 if item:
                     item.setData(Qt.UserRole, entry)
+            
+            # [BAN_FEATURE] Подсветка запрещённых материалов
+            if self.banned_store and self.banned_store.is_banned(entry):
+                ban_color = QColor(255, 200, 200)
+                for col in range(1, 6):
+                    item = self.table.item(row, col)
+                    if item:
+                        item.setBackground(ban_color)
 
     def _remember_visible_selections(self) -> None:
         for row in range(self.table.rowCount()):
