@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 from typing import Optional
+from datetime import date
 
 from app.config import DATA_DIR
 
@@ -22,7 +23,8 @@ class SettingsManager:
         default_settings = {
             "output_directory": None,  # Путь к папке сохранения документов
             "starting_number": 1,  # Начальный номер для нумерации извещений
-            "open_after_generate": True  # Автоматически открывать файл после генерации
+            "open_after_generate": True,  # Автоматически открывать файл после генерации
+            "default_year": date.today().year  # Год по умолчанию для нумерации
         }
         
         if not self.settings_file.exists():
@@ -89,5 +91,16 @@ class SettingsManager:
         if not isinstance(value, bool):
             raise ValueError("Значение должно быть булевым")
         self._settings["open_after_generate"] = value
+        self._save_settings()
+    
+    def get_default_year(self) -> int:
+        """Получить год по умолчанию для нумерации"""
+        return self._settings.get("default_year", date.today().year)
+    
+    def set_default_year(self, year: int):
+        """Установить год по умолчанию для нумерации"""
+        if not isinstance(year, int) or year < 2000 or year > 2100:
+            raise ValueError("Некорректный год")
+        self._settings["default_year"] = year
         self._save_settings()
 

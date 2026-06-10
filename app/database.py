@@ -119,8 +119,10 @@ class DatabaseManager:
             # Таблица нумерации документов
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS numbering (
-                    year INTEGER PRIMARY KEY,
-                    last_number INTEGER NOT NULL DEFAULT 0
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,
+                    last_number INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (year, month)
                 )
             """)
             
@@ -170,11 +172,12 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     document_number INTEGER NOT NULL,
                     year INTEGER NOT NULL,
+                    month INTEGER NOT NULL DEFAULT 1,
                     data_json TEXT NOT NULL,
                     output_file_path TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(document_number, year)
+                    UNIQUE(document_number, year, month)
                 )
             """)
             
@@ -197,6 +200,50 @@ class DatabaseManager:
         
         if 'replacement_set_id' not in columns:
             cursor.execute("ALTER TABLE catalog_entries ADD COLUMN replacement_set_id INTEGER")
+        
+        # Миграция таблицы numbering: добавление month в PRIMARY KEY
+        cursor.execute("PRAGMA table_info(numbering)")
+        numbering_columns = [row[1] for row in cursor.fetchall()]
+        if 'month' not in numbering_columns:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS numbering_new (
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL DEFAULT 1,
+                    last_number INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (year, month)
+                )
+            """)
+            cursor.execute("INSERT OR IGNORE INTO numbering_new (year, month, last_number) SELECT year, 1, last_number FROM numbering")
+            cursor.execute("DROP TABLE IF EXISTS numbering")
+            cursor.execute("ALTER TABLE numbering_new RENAME TO numbering")
+        
+        # Миграция таблицы documents: добавление month
+        cursor.execute("PRAGMA table_info(documents)")
+        doc_columns = [row[1] for row in cursor.fetchall()]
+        if 'month' not in doc_columns:
+            cursor.execute("ALTER TABLE documents ADD COLUMN month INTEGER NOT NULL DEFAULT 1")
+            # Обновляем UNIQUE constraint - создаём новую таблицу
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS documents_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_number INTEGER NOT NULL,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL DEFAULT 1,
+                    data_json TEXT NOT NULL,
+                    output_file_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(document_number, year, month)
+                )
+            """)
+            cursor.execute("""
+                INSERT OR IGNORE INTO documents_new 
+                (id, document_number, year, month, data_json, output_file_path, created_at, updated_at)
+                SELECT id, document_number, year, 1, data_json, output_file_path, created_at, updated_at 
+                FROM documents
+            """)
+            cursor.execute("DROP TABLE IF EXISTS documents")
+            cursor.execute("ALTER TABLE documents_new RENAME TO documents")
         
         # [BAN_FEATURE] Миграция banned_replacements (добавление after_name)
         cursor.execute("PRAGMA table_info(banned_replacements)")

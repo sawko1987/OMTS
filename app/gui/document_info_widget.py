@@ -4,7 +4,7 @@
 import logging
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout,
-    QLineEdit, QDateEdit, QLabel
+    QLineEdit, QDateEdit, QLabel, QComboBox, QSpinBox
 )
 from PySide6.QtCore import QDate
 from datetime import date
@@ -12,18 +12,10 @@ from datetime import date
 from app.models import DocumentData
 from app.numbering import NumberingManager
 from app.database import DatabaseManager
+from app.settings_manager import SettingsManager
+from app.config import MONTHS
 
 logger = logging.getLogger(__name__)
-
-
-def get_current_month_name() -> str:
-    """Получить название текущего месяца на русском языке"""
-    months = {
-        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
-        5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
-        9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
-    }
-    return months.get(date.today().month, "Неизвестно")
 
 
 class DocumentInfoWidget(QWidget):
@@ -34,7 +26,10 @@ class DocumentInfoWidget(QWidget):
         self.document_data = document_data
         self.db_manager = db_manager or DatabaseManager()
         self.numbering = NumberingManager(self.db_manager)
+        self.settings_manager = SettingsManager()
         self._number_year = None  # Год, для которого был установлен текущий номер
+        self._number_month = None  # Месяц, для которого был установлен текущий номер
+        self._updating = False  # Флаг для предотвращения рекурсивных вызовов
         self.init_ui()
         self.refresh()
     
@@ -50,8 +45,9 @@ class DocumentInfoWidget(QWidget):
         # Форма
         form_layout = QFormLayout()
         
-        # Номер документа (автоматический)
+        # Номер документа (автоматический, формат ММ-ГГ-№)
         self.number_label = QLabel()
+        self.number_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2a6da8;")
         form_layout.addRow("Номер извещения:", self.number_label)
         
         # Дата внедрения замены
@@ -62,10 +58,20 @@ class DocumentInfoWidget(QWidget):
         self.date_edit.dateChanged.connect(self._on_date_changed)
         form_layout.addRow("Дата внедрения замены:", self.date_edit)
         
-        # Срок действия (партия)
-        self.validity_edit = QLineEdit()
-        self.validity_edit.setPlaceholderText("например: ноябрь")
-        form_layout.addRow("Срок действия (партия):", self.validity_edit)
+        # Срок действия (партия) - выпадающий список месяцев
+        self.validity_combo = QComboBox()
+        for month_num in range(1, 13):
+            self.validity_combo.addItem(MONTHS[month_num], month_num)
+        self.validity_combo.currentIndexChanged.connect(self._on_month_changed)
+        form_layout.addRow("Срок действия (партия):", self.validity_combo)
+        
+        # Год для нумерации (ГГ)
+        self.year_spin = QSpinBox()
+        current_year = date.today().year
+        self.year_spin.setRange(current_year - 10, current_year + 10)
+        self.year_spin.setValue(self.settings_manager.get_default_year())
+        self.year_spin.valueChanged.connect(self._on_year_changed)
+        form_layout.addRow("Год (для нумерации):", self.year_spin)
         
         # Причина
         self.reason_edit = QLineEdit()
@@ -75,9 +81,17 @@ class DocumentInfoWidget(QWidget):
         layout.addLayout(form_layout)
         layout.addStretch()
     
+    def _get_current_month_year(self) -> tuple:
+        """Получить текущие месяц (1-12) и год из полей виджета"""
+        month = self.validity_combo.currentData()
+        year = self.year_spin.value()
+        return month, year
+    
     def refresh(self):
         """Обновить отображение"""
-        logger.info(f"[refresh] Начало обновления. document_number={self.document_data.document_number}, _number_year={self._number_year}")
+        logger.info(f"[refresh] Начало обновления. document_number={self.document_data.document_number}, _number_year={self._number_year}, _number_month={self._number_month}")
+        
+        self._updating = True
         
         # Дата внедрения (устанавливаем первой, чтобы номер рассчитывался на её основе)
         if self.document_data.implementation_date:
@@ -89,138 +103,183 @@ class DocumentInfoWidget(QWidget):
             self.date_edit.setDate(QDate.currentDate())
             logger.info(f"[refresh] Дата внедрения не установлена, используется текущая дата")
         
-        # Номер документа - если уже установлен, используем его и сохраняем
-        # Для существующих документов номер не должен изменяться
-        if self.document_data.document_number:
-            # Сохраняем существующий номер документа
-            self.number_label.setText(str(self.document_data.document_number))
-            # Сохраняем год, для которого был установлен номер (из даты внедрения)
-            impl_date = self.document_data.implementation_date
-            self._number_year = impl_date.year if impl_date else None
-            logger.info(f"[refresh] Используется существующий номер: {self.document_data.document_number}, год: {self._number_year}")
+        # Срок действия (партия) - устанавливаем месяц в комбобоксе
+        if self.document_data.document_month is not None:
+            month = self.document_data.document_month
+            idx = self.validity_combo.findData(month)
+            if idx >= 0:
+                self.validity_combo.setCurrentIndex(idx)
+        elif self.document_data.validity_period:
+            # Пытаемся найти месяц по названию (для обратной совместимости)
+            month_name = self.document_data.validity_period
+            for num, name in MONTHS.items():
+                if name.lower() == month_name.lower():
+                    idx = self.validity_combo.findData(num)
+                    if idx >= 0:
+                        self.validity_combo.setCurrentIndex(idx)
+                    self.document_data.document_month = num
+                    break
         else:
-            # Устанавливаем новый номер только для новых документов
-            # Получаем год из даты внедрения или текущий год
-            impl_date = self.document_data.implementation_date
-            if impl_date:
-                year = impl_date.year
-            else:
-                # Если дата не установлена, используем год из текущей даты виджета
-                year = self.date_edit.date().year() if self.date_edit.date().isValid() else date.today().year
-            next_num = self.numbering.get_current_number(year)
-            self.number_label.setText(str(next_num))
-            self.document_data.document_number = next_num
-            self._number_year = year  # Сохраняем год, для которого установлен номер
-            logger.info(f"[refresh] Установлен новый номер: {next_num} для года: {year}")
+            # Устанавливаем текущий месяц
+            current_month = date.today().month
+            idx = self.validity_combo.findData(current_month)
+            if idx >= 0:
+                self.validity_combo.setCurrentIndex(idx)
+            self.document_data.document_month = current_month
+            self.document_data.validity_period = MONTHS[current_month]
         
-        # Срок действия (партия)
-        if self.document_data.validity_period:
-            self.validity_edit.setText(self.document_data.validity_period)
+        # Год для нумерации
+        if self.document_data.document_year is not None:
+            self.year_spin.setValue(self.document_data.document_year)
         else:
-            current_month = get_current_month_name()
-            self.validity_edit.setText(current_month)
-            self.document_data.validity_period = current_month
+            default_year = self.settings_manager.get_default_year()
+            self.year_spin.setValue(default_year)
+            self.document_data.document_year = default_year
+        
+        self._updating = False
+        
+        # Для загруженного из БД документа — сохраняем его месяц/год,
+        # чтобы _update_number_display() не перезаписал номер счётчиком
+        if self.document_data.document_number is not None:
+            if self.document_data.document_month is not None:
+                self._number_month = self.document_data.document_month
+            if self.document_data.document_year is not None:
+                self._number_year = self.document_data.document_year
+        
+        # Номер документа
+        self._update_number_display()
         
         # Причина
         self.reason_edit.setText(self.document_data.reason)
     
+    def _update_number_display(self):
+        """Обновить отображение номера документа в формате ММ-ГГ-№"""
+        month, year = self._get_current_month_year()
+        
+        # Для существующих документов (загруженных из БД) сохраняем текущий номер
+        if self.document_data.document_number is not None and self._number_month is not None and self._number_year is not None:
+            # Показываем номер в формате ММ-ГГ-№
+            display = NumberingManager.format_number(month, year, self.document_data.document_number)
+            self.number_label.setText(display)
+            logger.info(f"[_update_number_display] Существующий номер: {display}")
+        else:
+            # Для нового документа - получаем текущий номер для месяца+года
+            next_num = self.numbering.get_current_number(year, month)
+            self.document_data.document_number = next_num
+            self.document_data.document_month = month
+            self.document_data.document_year = year
+            self._number_month = month
+            self._number_year = year
+            display = NumberingManager.format_number(month, year, next_num)
+            self.number_label.setText(display)
+            logger.info(f"[_update_number_display] Новый номер: {display}")
+    
     def refresh_number(self):
         """Обновить только номер документа"""
-        logger.info(f"[refresh_number] Начало. document_number={self.document_data.document_number}, _number_year={self._number_year}")
+        logger.info(f"[refresh_number] Начало. document_number={self.document_data.document_number}, _number_year={self._number_year}, _number_month={self._number_month}")
         
         # Пересоздаем NumberingManager, чтобы гарантировать чтение актуальных данных
         self.numbering = NumberingManager(self.db_manager)
-        # Получаем год из даты внедрения или текущий год
-        impl_date = self.document_data.implementation_date
-        year = impl_date.year if impl_date else None
-        next_num = self.numbering.get_current_number(year)
-        self.number_label.setText(str(next_num))
-        # Обновляем document_number, чтобы следующий документ использовал новый номер
-        self.document_data.document_number = next_num
-        self._number_year = year  # Сохраняем год, для которого установлен номер
+        month, year = self._get_current_month_year()
         
-        logger.info(f"[refresh_number] Обновлен номер: {next_num} для года: {year}")
+        next_num = self.numbering.get_current_number(year, month)
+        self.document_data.document_number = next_num
+        self.document_data.document_month = month
+        self.document_data.document_year = year
+        self._number_month = month
+        self._number_year = year
+        
+        display = NumberingManager.format_number(month, year, next_num)
+        self.number_label.setText(display)
+        
+        logger.info(f"[refresh_number] Обновлен номер: {display}")
     
     def _on_date_changed(self, new_date: QDate):
-        """Обработчик изменения даты внедрения - автоматически пересчитывает номер документа"""
+        """Обработчик изменения даты внедрения"""
         logger.info(f"[_on_date_changed] Вызван. Новая дата: {new_date.toPython()}")
         
         # Обновляем дату в document_data
         self.document_data.implementation_date = new_date.toPython()
         
-        new_year = new_date.year()
+        # Не пересчитываем номер при изменении даты (номер привязан к месяцу+году из выпадающих списков)
+        if not self._updating:
+            self._update_number_display()
+    
+    def _on_month_changed(self, index):
+        """Обработчик изменения месяца в выпадающем списке"""
+        if self._updating:
+            return
         
-        logger.info(f"[_on_date_changed] Текущий номер: {self.document_data.document_number}, "
-                   f"текущий год (_number_year): {self._number_year}, новый год: {new_year}")
+        month = self.validity_combo.currentData()
+        self.document_data.document_month = month
+        self.document_data.validity_period = MONTHS[month]
         
-        # Пересчитываем номер документа на основе нового года
-        # Если номер еще не установлен или год изменился - пересчитываем номер
-        # Для существующих документов (загруженных из БД) сохраняем текущий номер
-        if self.document_data.document_number is None:
-            # Новый документ - получаем номер для нового года
-            logger.info(f"[_on_date_changed] Условие 1: номер не установлен, получаем номер для года {new_year}")
-            next_num = self.numbering.get_current_number(new_year)
-            self.number_label.setText(str(next_num))
-            self.document_data.document_number = next_num
-            self._number_year = new_year
-            logger.info(f"[_on_date_changed] Установлен номер: {next_num} для года: {new_year}")
-        elif self._number_year is None:
-            # _number_year не установлен (новый документ, но номер уже был установлен в refresh)
-            # Пересчитываем номер для нового года
-            logger.info(f"[_on_date_changed] Условие 2: _number_year не установлен (новый документ), пересчитываем номер для года {new_year}")
-            next_num = self.numbering.get_current_number(new_year)
-            self.number_label.setText(str(next_num))
-            self.document_data.document_number = next_num
-            self._number_year = new_year
-            logger.info(f"[_on_date_changed] Обновлен номер: {next_num} для года: {new_year}")
-        elif self._number_year != new_year:
-            # Год изменился - пересчитываем номер для нового года
-            # Это означает, что пользователь изменил год для нового документа
-            logger.info(f"[_on_date_changed] Условие 3: год изменился ({self._number_year} -> {new_year}), пересчитываем номер")
-            next_num = self.numbering.get_current_number(new_year)
-            logger.info(f"[_on_date_changed] Получен номер {next_num} для года {new_year}, обновляем отображение")
-            old_text = self.number_label.text()
-            self.number_label.setText(str(next_num))
-            self.number_label.update()  # Принудительное обновление виджета
-            new_text = self.number_label.text()
-            logger.info(f"[_on_date_changed] Текст в number_label изменен: '{old_text}' -> '{new_text}'")
-            self.document_data.document_number = next_num
-            self._number_year = new_year
-            logger.info(f"[_on_date_changed] Обновлен номер: {next_num} для года: {new_year}, _number_year установлен в {self._number_year}")
+        logger.info(f"[_on_month_changed] Выбран месяц: {month} ({MONTHS[month]})")
+        
+        # Если у документа нет «родного» месяца (новый документ, месяц не совпадает) —
+        # перезапрашиваем номер для нового месяца
+        if (self.document_data.document_number is not None
+                and self._number_month is not None
+                and self._number_month == month):
+            # Месяц не изменился относительно сохранённого — просто обновить отображение
+            self._update_number_display()
         else:
-            # Год не изменился - сохраняем текущий номер
-            # Просто обновляем отображение, не меняя номер
-            logger.info(f"[_on_date_changed] Условие 4: год не изменился ({self._number_year}). "
-                       f"Сохраняем номер: {self.document_data.document_number}")
-            self.number_label.setText(str(self.document_data.document_number))
+            # Месяц изменился или это новый документ — получить номер для нового месяца
+            self.refresh_number()
+    
+    def _on_year_changed(self, year):
+        """Обработчик изменения года"""
+        if self._updating:
+            return
+        
+        self.document_data.document_year = year
+        logger.info(f"[_on_year_changed] Выбран год: {year}")
+        
+        # Сохраняем выбранный год в настройки
+        self.settings_manager.set_default_year(year)
+        
+        # Если год изменился — перезапрашиваем номер для нового года
+        if (self.document_data.document_number is not None
+                and self._number_year is not None
+                and self._number_year == year):
+            self._update_number_display()
+        else:
+            self.refresh_number()
     
     def update_document_data(self):
         """Обновить данные документа из полей"""
-        logger.info(f"[update_document_data] Начало. document_number={self.document_data.document_number}, _number_year={self._number_year}")
+        logger.info(f"[update_document_data] Начало. document_number={self.document_data.document_number}")
+        
+        month, year = self._get_current_month_year()
         
         # Дата внедрения
         qdate = self.date_edit.date()
         self.document_data.implementation_date = qdate.toPython()
-        year = qdate.year() if qdate.isValid() else None
-        logger.info(f"[update_document_data] Дата: {self.document_data.implementation_date}, год: {year}")
+        
+        # Месяц и год для нумерации
+        self.document_data.document_month = month
+        self.document_data.document_year = year
+        self.document_data.validity_period = MONTHS.get(month)
         
         # Номер документа - сохраняем существующий номер, если он установлен
-        # Устанавливаем новый номер только для новых документов (когда номер не установлен)
         if not self.document_data.document_number:
-            # Новый документ - получаем номер на основе года из даты
-            logger.info(f"[update_document_data] Номер не установлен, получаем номер для года {year}")
-            next_num = self.numbering.get_current_number(year)
+            # Новый документ - получаем номер
+            next_num = self.numbering.get_current_number(year, month)
             self.document_data.document_number = next_num
-            self.number_label.setText(str(next_num))
-            self._number_year = year  # Сохраняем год, для которого установлен номер
-            logger.info(f"[update_document_data] Установлен номер: {next_num} для года: {year}")
+            self._number_month = month
+            self._number_year = year
+            display = NumberingManager.format_number(month, year, next_num)
+            self.number_label.setText(display)
+            logger.info(f"[update_document_data] Установлен номер: {display}")
         else:
             # Существующий документ - сохраняем текущий номер
-            # Убеждаемся, что отображение соответствует сохраненному номеру
-            logger.info(f"[update_document_data] Номер уже установлен: {self.document_data.document_number}, сохраняем его")
-            self.number_label.setText(str(self.document_data.document_number))
+            display = NumberingManager.format_number(
+                self._number_month or month,
+                self._number_year or year,
+                self.document_data.document_number
+            )
+            self.number_label.setText(display)
+            logger.info(f"[update_document_data] Номер уже установлен: {display}")
         
-        # Остальные поля
-        self.document_data.validity_period = self.validity_edit.text().strip() or None
+        # Причина
         self.document_data.reason = self.reason_edit.text().strip()
-

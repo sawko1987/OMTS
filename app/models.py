@@ -39,7 +39,9 @@ class PartChanges:
 class DocumentData:
     """Данные документа "Извещение на замену материалов" """
     # Реквизиты документа
-    document_number: Optional[int] = None  # Номер извещения (автоматически)
+    document_number: Optional[int] = None  # Номер извещения (автоматически, последовательная часть)
+    document_month: Optional[int] = None  # Месяц для нумерации (1-12)
+    document_year: Optional[int] = None  # Год для нумерации (полный, напр. 2026)
     implementation_date: Optional[date] = None  # Дата внедрения замены
     validity_period: Optional[str] = None  # Срок действия (партия)
     products: List[str] = field(default_factory=list)  # Изделия (машины)
@@ -48,6 +50,14 @@ class DocumentData:
     
     # Изменения по деталям
     part_changes: List[PartChanges] = field(default_factory=list)
+    
+    def get_display_number(self) -> str:
+        """Получить отформатированный номер документа в формате ММ-ГГ-№"""
+        if self.document_month is not None and self.document_year is not None and self.document_number is not None:
+            mm = f"{self.document_month:02d}"
+            yy = f"{self.document_year % 100:02d}"
+            return f"{mm}-{yy}-{self.document_number}"
+        return str(self.document_number) if self.document_number else ""
     
     def get_all_workshops(self) -> List[str]:
         """Получить список всех цехов, встречающихся в документе"""

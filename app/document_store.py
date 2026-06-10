@@ -27,17 +27,18 @@ class DocumentStore:
         
         # Используем год из даты внедрения, если она установлена, иначе текущий год
         document_year = document_data.implementation_date.year if document_data.implementation_date else date.today().year
+        document_month = document_data.document_month or date.today().month
         data_json = self.serializer.serialize(document_data)
         
         try:
             with self.db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Проверяем, существует ли уже документ с таким номером и годом
+                # Проверяем, существует ли уже документ с таким номером, годом и месяцем
                 cursor.execute("""
                     SELECT id FROM documents 
-                    WHERE document_number = ? AND year = ?
-                """, (document_data.document_number, document_year))
+                    WHERE document_number = ? AND year = ? AND month = ?
+                """, (document_data.document_number, document_year, document_month))
                 
                 existing = cursor.fetchone()
                 
@@ -52,15 +53,15 @@ class DocumentStore:
                 else:
                     # Создаём новый документ
                     cursor.execute("""
-                        INSERT INTO documents (document_number, year, data_json, output_file_path)
-                        VALUES (?, ?, ?, ?)
-                    """, (document_data.document_number, document_year, data_json, output_file_path))
+                        INSERT INTO documents (document_number, year, month, data_json, output_file_path)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (document_data.document_number, document_year, document_month, data_json, output_file_path))
                     return cursor.lastrowid
         except sqlite3.Error as e:
             print(f"Ошибка при сохранении документа: {e}")
             return None
     
-    def load_document(self, document_number: int, year: Optional[int] = None) -> Optional[DocumentData]:
+    def load_document(self, document_number: int, year: Optional[int] = None, month: Optional[int] = None) -> Optional[DocumentData]:
         """Загрузить документ по номеру. Если год не указан, используется текущий год."""
         if year is None:
             year = date.today().year
@@ -68,10 +69,17 @@ class DocumentStore:
         try:
             with self.db_manager.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT data_json FROM documents 
-                    WHERE document_number = ? AND year = ?
-                """, (document_number, year))
+                if month is not None:
+                    cursor.execute("""
+                        SELECT data_json FROM documents 
+                        WHERE document_number = ? AND year = ? AND month = ?
+                    """, (document_number, year, month))
+                else:
+                    cursor.execute("""
+                        SELECT data_json FROM documents 
+                        WHERE document_number = ? AND year = ?
+                        ORDER BY month DESC LIMIT 1
+                    """, (document_number, year))
                 
                 row = cursor.fetchone()
                 if row:
@@ -83,8 +91,8 @@ class DocumentStore:
         
         return None
     
-    def get_all_documents(self, year: Optional[int] = None) -> List[Tuple[int, int, str, Optional[str]]]:
-        """Получить список всех документов: (document_number, year, created_at, output_file_path).
+    def get_all_documents(self, year: Optional[int] = None) -> List[Tuple[int, int, int, str, Optional[str]]]:
+        """Получить список всех документов: (document_number, year, month, created_at, output_file_path).
         Если год не указан, возвращаются документы за все годы."""
         try:
             with self.db_manager.get_connection() as conn:
@@ -92,19 +100,19 @@ class DocumentStore:
                 
                 if year:
                     cursor.execute("""
-                        SELECT document_number, year, created_at, output_file_path
+                        SELECT document_number, year, month, created_at, output_file_path
                         FROM documents
                         WHERE year = ?
-                        ORDER BY document_number DESC
+                        ORDER BY year DESC, month DESC, document_number DESC
                     """, (year,))
                 else:
                     cursor.execute("""
-                        SELECT document_number, year, created_at, output_file_path
+                        SELECT document_number, year, month, created_at, output_file_path
                         FROM documents
-                        ORDER BY year DESC, document_number DESC
+                        ORDER BY year DESC, month DESC, document_number DESC
                     """)
                 
-                return [(row['document_number'], row['year'], row['created_at'], row['output_file_path']) 
+                return [(row['document_number'], row['year'], row['month'], row['created_at'], row['output_file_path']) 
                         for row in cursor.fetchall()]
         except sqlite3.Error as e:
             print(f"Ошибка при получении списка документов: {e}")
@@ -147,34 +155,38 @@ class DocumentStore:
 
         return None
     
-    def document_exists(self, document_number: int, year: Optional[int] = None) -> bool:
+    def document_exists(self, document_number: int, year: Optional[int] = None, month: Optional[int] = None) -> bool:
         """Проверить существование документа"""
         if year is None:
             year = date.today().year
+        if month is None:
+            month = date.today().month
         
         try:
             with self.db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT COUNT(*) FROM documents 
-                    WHERE document_number = ? AND year = ?
-                """, (document_number, year))
+                    WHERE document_number = ? AND year = ? AND month = ?
+                """, (document_number, year, month))
                 return cursor.fetchone()[0] > 0
         except sqlite3.Error:
             return False
     
-    def delete_document(self, document_number: int, year: Optional[int] = None) -> bool:
+    def delete_document(self, document_number: int, year: Optional[int] = None, month: Optional[int] = None) -> bool:
         """Удалить документ"""
         if year is None:
             year = date.today().year
+        if month is None:
+            month = date.today().month
         
         try:
             with self.db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     DELETE FROM documents 
-                    WHERE document_number = ? AND year = ?
-                """, (document_number, year))
+                    WHERE document_number = ? AND year = ? AND month = ?
+                """, (document_number, year, month))
                 return cursor.rowcount > 0
         except sqlite3.Error as e:
             print(f"Ошибка при удалении документа: {e}")

@@ -1,5 +1,6 @@
 {
   "output_directory": "Z:\\КормМаш\\DOC2\\ОМТС\\Листки отклонения",
   "starting_number": 1,
-  "open_after_generate": true
+  "open_after_generate": true,
+  "default_year": 2026
 }

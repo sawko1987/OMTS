@@ -19,7 +19,7 @@ from app.gui.replacement_sets_editor_widget import ReplacementSetsEditorWidget
 from app.gui.settings_dialog import SettingsDialog
 from app.gui.product_parts_binding_dialog import ProductPartsBindingDialog
 from app.gui.database_restore_dialog import DatabaseRestoreDialog
-from app.config import PROJECT_ROOT, DATABASE_PATH
+from app.config import PROJECT_ROOT, DATABASE_PATH, MONTHS
 from app.database import DatabaseManager
 from app.product_store import ProductStore
 from app.catalog_loader import CatalogLoader
@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
         # Сохраняем последнюю использованную дату для использования при создании нового документа
         self._last_used_date = None
         self._last_used_validity_period = None
+        self._last_used_year = None  # Год для нумерации
         
         # Инициализация БД (до создания UI)
         self.init_database()
@@ -67,6 +68,8 @@ class MainWindow(QMainWindow):
             self.document_data.implementation_date = self._last_used_date
         if self._last_used_validity_period:
             self.document_data.validity_period = self._last_used_validity_period
+        if self._last_used_year:
+            self.document_data.document_year = self._last_used_year
 
     def _on_implementation_date_changed(self, qdate):
         """Сохранять последнюю выбранную дату до перезапуска приложения."""
@@ -78,6 +81,11 @@ class MainWindow(QMainWindow):
         value = text.strip()
         if value:
             self._last_used_validity_period = value
+
+    def _on_year_changed(self, year):
+        """Сохранять последний выбранный год и записывать в настройки."""
+        self._last_used_year = year
+        self.settings_manager.set_default_year(year)
     
     def init_database(self):
         """Инициализировать базу данных"""
@@ -137,7 +145,8 @@ class MainWindow(QMainWindow):
         # Вкладка 1: Реквизиты документа
         self.doc_info_widget = DocumentInfoWidget(self.document_data, self.product_store, self.db_manager)
         self.doc_info_widget.date_edit.dateChanged.connect(self._on_implementation_date_changed)
-        self.doc_info_widget.validity_edit.textChanged.connect(self._on_validity_period_changed)
+        self.doc_info_widget.validity_combo.currentTextChanged.connect(self._on_validity_period_changed)
+        self.doc_info_widget.year_spin.valueChanged.connect(self._on_year_changed)
         self.tabs.addTab(self.doc_info_widget, "Реквизиты документа")
         
         # Вкладка 2: Таблица изменений
@@ -336,14 +345,7 @@ class MainWindow(QMainWindow):
         else:
             impl_date = self.document_data.implementation_date
         
-        # Словарь названий месяцев на русском
-        months = {
-            1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
-            5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
-            9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
-        }
-        
-        month_name = months.get(impl_date.month, "Неизвестно")
+        month_name = MONTHS.get(impl_date.month, "Неизвестно")
         year = impl_date.year
         
         return f"{month_name}_{year}"
@@ -378,6 +380,9 @@ class MainWindow(QMainWindow):
             self._last_used_date = self.document_data.implementation_date
         if self.document_data.validity_period:
             self._last_used_validity_period = self.document_data.validity_period
+        if self.document_data.document_year:
+            self._last_used_year = self.document_data.document_year
+            self.settings_manager.set_default_year(self.document_data.document_year)
         
         # Валидация
         if not self.document_data.implementation_date:
@@ -509,16 +514,21 @@ class MainWindow(QMainWindow):
         from app.numbering import NumberingManager
         
         numbering = NumberingManager()
+        doc_month = self.document_data.document_month or date.today().month
+        doc_year = self.document_data.document_year or date.today().year
+        
         if not self.document_data.document_number:
             # Получаем следующий номер и устанавливаем его в document_data
-            # Используем год из даты внедрения для определения номера
-            # Генератор использует существующий номер и не будет вызывать get_next_number()
-            impl_date = self.document_data.implementation_date
-            year = impl_date.year if impl_date else None
-            doc_number = numbering.get_next_number(year)
+            doc_number = numbering.get_next_number(doc_year, doc_month)
             self.document_data.document_number = doc_number
+            self.document_data.document_month = doc_month
+            self.document_data.document_year = doc_year
         else:
             doc_number = self.document_data.document_number
+            doc_month = self.document_data.document_month or date.today().month
+            doc_year = self.document_data.document_year or date.today().year
+        
+        display_number = self.document_data.get_display_number()
         
         # Формируем структуру папок: месяц_год
         month_year_folder = self.get_month_year_folder()
@@ -537,29 +547,29 @@ class MainWindow(QMainWindow):
         material_name = self.get_first_material_name()
         sanitized_material = self.sanitize_filename(material_name)
         
-        # Формируем имя файла: номер_материал.xlsx
-        filename = f"{doc_number}_{sanitized_material}.xlsx"
+        # Формируем имя файла: ММ-ГГ-№_материал.xlsx
+        filename = f"{display_number}_{sanitized_material}.xlsx"
         file_path = target_dir / filename
         
         # Импортируем генератор здесь, чтобы избежать циклических импортов
         from app.excel_generator import ExcelGenerator
         
         try:
-            # Проверяем, существует ли уже документ с таким номером и годом
-            document_year = self.document_data.implementation_date.year if self.document_data.implementation_date else date.today().year
-            if self.document_store.document_exists(doc_number, document_year):
+            # Проверяем, существует ли уже документ с таким номером, годом и месяцем
+            document_year = doc_year
+            if self.document_store.document_exists(doc_number, document_year, doc_month):
                 # Получаем информацию о существующем документе
                 existing_docs = self.document_store.get_all_documents(document_year)
                 existing_doc = next((d for d in existing_docs if d[0] == doc_number), None)
                 
                 if existing_doc:
-                    existing_file = Path(existing_doc[3]).name if existing_doc[3] else "неизвестно"
+                    existing_file = Path(existing_doc[4]).name if existing_doc[4] else "неизвестно"
                     reply = QMessageBox.warning(
                         self,
                         "Документ уже существует",
-                        f"Документ №{doc_number} за {document_year} год уже существует:\n\n"
+                        f"Документ №{display_number} уже существует:\n\n"
                         f"Файл: {existing_file}\n"
-                        f"Создан: {existing_doc[2]}\n\n"
+                        f"Создан: {existing_doc[3]}\n\n"
                         f"Перезаписать существующий документ?\n\n"
                         f"⚠ ВНИМАНИЕ: Это удалит старый документ без возможности восстановления!",
                         QMessageBox.Yes | QMessageBox.No,
@@ -705,13 +715,14 @@ class MainWindow(QMainWindow):
         
         dialog = DocumentSelectionDialog(self.document_store, self)
         if dialog.exec():
-            document_number, year = dialog.get_selected_document()
+            document_number, year, month = dialog.get_selected_document()
             if document_number:
-                loaded_data = self.document_store.load_document(document_number, year)
+                loaded_data = self.document_store.load_document(document_number, year, month)
                 if loaded_data:
                     self.document_data = loaded_data
                     self._last_used_date = self.document_data.implementation_date
                     self._last_used_validity_period = self.document_data.validity_period
+                    self._last_used_year = self.document_data.document_year
                     # Определяем максимальный номер доп. страницы для восстановления счётчика
                     max_page = 0
                     pages_found = []
@@ -738,7 +749,8 @@ class MainWindow(QMainWindow):
                     self.doc_info_widget.refresh()
                     self.changes_widget.refresh()
                     self.changes_widget.update_product_filter()
-                    QMessageBox.information(self, "Успех", f"Документ №{document_number} загружен")
+                    display_num = self.document_data.get_display_number()
+                    QMessageBox.information(self, "Успех", f"Документ {display_num} загружен")
                 else:
                     QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить документ №{document_number}")
     

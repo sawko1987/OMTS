@@ -149,19 +149,38 @@ def migrate_numbering_from_json(db_manager: DatabaseManager) -> int:
     with db_manager.get_connection() as conn:
         cursor = conn.cursor()
         
+        # Поддержка старого формата (один ключ "year"/"last")
         year = numbering_data.get("year")
-        last_number = numbering_data.get("last", 0)
-        
-        if year:
+        if year is not None:
+            last_number = numbering_data.get("last", 0)
             cursor.execute("""
-                INSERT INTO numbering (year, last_number)
-                VALUES (?, ?)
-            """, (year, last_number))
-            conn.commit()
-            print(f"Мигрирована нумерация: год {year}, последний номер {last_number}")
-            return 1
+                INSERT INTO numbering (year, month, last_number)
+                VALUES (?, ?, ?)
+            """, (year, 1, last_number))
+            print(f"Мигрирована нумерация (старый формат): год {year}, месяц 1, последний номер {last_number}")
+        
+        # Поддержка нового формата (ключи вида "2026_1")
+        imported_keys = set()
+        for key, last_number in numbering_data.items():
+            if "_" in key:
+                try:
+                    parts = key.split("_")
+                    year = int(parts[0])
+                    month = int(parts[1])
+                    key_tuple = (year, month)
+                    if key_tuple not in imported_keys:
+                        cursor.execute("""
+                            INSERT INTO numbering (year, month, last_number)
+                            VALUES (?, ?, ?)
+                        """, (year, month, last_number))
+                        imported_keys.add(key_tuple)
+                        print(f"Мигрирована нумерация: год {year}, месяц {month}, последний номер {last_number}")
+                except (ValueError, IndexError):
+                    pass
+        
+        conn.commit()
     
-    return 0
+    return len(imported_keys) + (1 if year is not None else 0)
 
 
 def migrate_all() -> bool:

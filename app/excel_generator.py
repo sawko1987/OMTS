@@ -312,18 +312,19 @@ class ExcelGenerator:
         main_sheet = wb[self.config["main_sheet"]]
         logger.debug(f"Шаблон загружен. Листы в шаблоне: {wb.sheetnames}")
         
-        # Получаем номер документа
-        # Используем год из даты внедрения для определения номера
-        impl_date = document_data.implementation_date
-        year = impl_date.year if impl_date else None
+        # Получаем номер документа (с учётом месяца)
+        doc_month = document_data.document_month or date.today().month
+        doc_year = document_data.document_year or date.today().year
         
         if not document_data.document_number:
-            document_data.document_number = self.numbering.get_next_number(year)
-            logger.info(f"Автоматически присвоен номер документа: {document_data.document_number}")
+            document_data.document_number = self.numbering.get_next_number(doc_year, doc_month)
+            document_data.document_month = doc_month
+            document_data.document_year = doc_year
+            logger.info(f"Автоматически присвоен номер: {document_data.get_display_number()}")
         else:
             # Сохраняем вручную установленный номер как использованный
-            self.numbering.mark_number_as_used(document_data.document_number, year)
-            logger.info(f"Используется номер документа: {document_data.document_number}")
+            self.numbering.mark_number_as_used(document_data.document_number, doc_year, doc_month)
+            logger.info(f"Используется номер: {document_data.get_display_number()}")
         
         # Подсчитываем общее количество деталей с изменениями
         total_parts = len([pc for pc in document_data.part_changes 
@@ -497,14 +498,15 @@ class ExcelGenerator:
         approver_name_cell.value = "\u0411\u0438\u0440\u044e\u043a\u043e\u0432 \u0410.\u0421."
         approver_role_cell.value = "1й зам.директора"
 
-        # Номер документа (в заголовке, строка 5)
+        # Номер документа (в заголовке, строка 5) - формат ММ-ГГ-№
+        display_number = doc_data.get_display_number()
         for col in range(1, 16):
             cell = get_merged_cell_value(sheet, 5, col)
             if cell.value and "извещение" in str(cell.value).lower():
                 text = str(cell.value)
                 if "№" in text:
                     import re
-                    new_text = re.sub(r'№\s*\d+', f'№ {doc_data.document_number}', text)
+                    new_text = re.sub(r'№\s*\d+', f'№ {display_number}', text)
                     cell.value = new_text
                 break
         
@@ -1197,6 +1199,7 @@ class ExcelGenerator:
 
         # 2) Строка 'к извещению ... № ... от ..' — заменяем номер и дату
         today_str = date.today().strftime("%d.%m.%Y")
+        display_number = doc_data.get_display_number()
         header_line_updated = False
 
         for row in range(1, 4):
@@ -1207,7 +1210,7 @@ class ExcelGenerator:
                 text = str(cell.value)
                 low = text.lower()
                 if "извещ" in low and "№" in text:
-                    new_text = re.sub(r"№\s*\d+", f"№ {doc_data.document_number}", text)
+                    new_text = re.sub(r"№\s*\d+", f"№ {display_number}", text)
                     new_text = re.sub(r"от\s*\d{2}\.\d{2}\.\d{4}", f"от {today_str}", new_text)
                     if new_text != text:
                         cell.value = new_text

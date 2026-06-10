@@ -16,6 +16,8 @@ class DocumentSerializer:
         """Сериализовать DocumentData в JSON строку"""
         data = {
             "document_number": document_data.document_number,
+            "document_month": document_data.document_month,
+            "document_year": document_data.document_year,
             "implementation_date": document_data.implementation_date.isoformat() if document_data.implementation_date else None,
             "validity_period": document_data.validity_period,
             "products": document_data.products,  # Список продуктов
@@ -71,6 +73,8 @@ class DocumentSerializer:
         
         document_data = DocumentData(
             document_number=data.get("document_number"),
+            document_month=data.get("document_month"),
+            document_year=data.get("document_year"),
             implementation_date=date.fromisoformat(data["implementation_date"]) if data.get("implementation_date") else None,
             validity_period=data.get("validity_period"),
             products=products,

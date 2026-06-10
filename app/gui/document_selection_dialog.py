@@ -92,10 +92,11 @@ class DocumentSelectionDialog(QDialog):
         """Заполнить таблицу документами"""
         self.table.setRowCount(len(documents))
 
-        for row, (doc_number, year, created_at, file_path) in enumerate(documents):
+        for row, doc_data_row in enumerate(documents):
+            doc_number, year, month, created_at, file_path = doc_data_row
             # Номер
             number_item = QTableWidgetItem(str(doc_number))
-            number_item.setData(Qt.UserRole, (doc_number, year))
+            number_item.setData(Qt.UserRole, (doc_number, year, month))
             self.table.setItem(row, 0, number_item)
             
             # Год
@@ -146,7 +147,7 @@ class DocumentSelectionDialog(QDialog):
 
     def document_matches_search(self, document, search_text: str) -> bool:
         """Проверить, соответствует ли документ строке поиска"""
-        doc_number, year, _, file_path = document
+        doc_number, year, month, _, file_path = document
         file_name = Path(file_path).name if file_path else ""
 
         searchable_values = (
@@ -161,14 +162,14 @@ class DocumentSelectionDialog(QDialog):
         self.btn_open.setEnabled(self.table.currentRow() >= 0)
     
     def get_selected_document(self):
-        """Получить выбранный документ: (document_number, year)"""
+        """Получить выбранный документ: (document_number, year, month)"""
         current_row = self.table.currentRow()
         if current_row >= 0:
             item = self.table.item(current_row, 0)
             if item:
-                doc_number, year = item.data(Qt.UserRole)
+                doc_number, year, month = item.data(Qt.UserRole)
                 self.selected_document_number = doc_number
                 self.selected_year = year
-                return doc_number, year
-        return None, None
+                return doc_number, year, month
+        return None, None, None
 
