@@ -13,13 +13,15 @@ from app.config import PROJECT_ROOT
 
 
 def _load_stylesheet() -> str:
-    """Загрузить QSS из app/gui/style.qss. Возвращает пустую строку, если файл не найден."""
-    qss_path = Path(__file__).parent / "app" / "gui" / "style.qss"
-    try:
-        with open(qss_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return ""
+    """Загрузить QSS для текущей темы.
+
+    По умолчанию — light. Тема выбирается через SettingsManager.
+    """
+    from app.settings_manager import SettingsManager
+    from app.gui.themes import _load_qss
+
+    theme = SettingsManager().get_theme()
+    return _load_qss(theme)
 
 
 def setup_logging():

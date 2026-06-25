@@ -121,6 +121,17 @@ class SettingsManager:
             return list(self.DEFAULT_REASON_TEMPLATES)
         return list(templates)
 
+    def get_theme(self) -> str:
+        """Получить выбранную тему (light/dark/system)."""
+        return self._settings.get("theme", "light")
+
+    def set_theme(self, theme: str) -> None:
+        """Установить тему."""
+        if theme not in ("light", "dark", "system"):
+            raise ValueError(f"Неизвестная тема: {theme}")
+        self._settings["theme"] = theme
+        self._save_settings()
+
     def set_reason_templates(self, templates: list[str]) -> None:
         """Установить список шаблонов причин замены.
 

@@ -116,6 +116,28 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(open_after_layout)
 
+        # === Тема оформления (Фаза 3) ===
+        theme_layout = QVBoxLayout()
+        theme_label = QLabel("Тема оформления:")
+        theme_layout.addWidget(theme_label)
+
+        from PySide6.QtWidgets import QButtonGroup, QRadioButton
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Светлая", "light")
+        self.theme_combo.addItem("Тёмная", "dark")
+        self.theme_combo.addItem("Как в системе", "system")
+        self.theme_combo.setToolTip(
+            "Светлая — фон белый, тёмная — фон тёмный. "
+            "«Как в системе» — следует настройке Windows."
+        )
+        theme_layout.addWidget(self.theme_combo)
+
+        theme_info = QLabel("Изменения темы применяются сразу при нажатии OK и сохраняются в settings.json")
+        theme_info.setStyleSheet("color: gray; font-size: 10px;")
+        theme_layout.addWidget(theme_info)
+
+        layout.addLayout(theme_layout)
+
         # Шаблоны причин замены (Фаза 1)
         templates_group = QGroupBox("Шаблоны причин замены")
         templates_layout = QVBoxLayout(templates_group)
@@ -190,6 +212,12 @@ class SettingsDialog(QDialog):
         templates = self.settings_manager.get_reason_templates()
         self.reason_templates_edit.setPlainText("\n".join(templates))
 
+        # Загружаем тему
+        theme = self.settings_manager.get_theme()
+        idx = self.theme_combo.findData(theme)
+        if idx >= 0:
+            self.theme_combo.setCurrentIndex(idx)
+
     def _on_month_changed(self, index):
         """Обновить отображение текущего номера при смене месяца"""
         month = self.current_month_combo.currentData()
@@ -258,6 +286,14 @@ class SettingsDialog(QDialog):
             templates_text = self.reason_templates_edit.toPlainText()
             templates_list = [line.strip() for line in templates_text.splitlines() if line.strip()]
             self.settings_manager.set_reason_templates(templates_list)
+
+            # Сохраняем тему (если изменилась — применяем сразу)
+            old_theme = self.settings_manager.get_theme()
+            new_theme = self.theme_combo.currentData() or "light"
+            if new_theme != old_theme:
+                self.settings_manager.set_theme(new_theme)
+                from app.gui.themes import apply_theme
+                apply_theme(new_theme)
             
             # Устанавливаем текущий номер для выбранного месяца (если он был изменен)
             month = self.current_month_combo.currentData()

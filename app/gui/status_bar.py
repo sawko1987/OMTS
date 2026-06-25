@@ -60,6 +60,11 @@ class StatusBarWidget(QWidget):
         self.ready_label.setStyleSheet("color: #666; font-size: 11px;")
         layout.addWidget(self.ready_label)
 
+        self.draft_label = self._make_label("", "draft")
+        self.draft_label.setStyleSheet("color: #666; font-size: 11px;")
+        layout.addWidget(self.draft_label)
+        self.set_draft_status("не сохранён", dirty=False)
+
         self.setStyleSheet(
             "StatusBarWidget { background-color: #f0f4f8; "
             "border-top: 1px solid #d0d7de; }"
@@ -98,6 +103,22 @@ class StatusBarWidget(QWidget):
 
     def set_ready_text(self, text: str) -> None:
         self.ready_label.setText(text)
+
+    def set_draft_status(self, text: str, dirty: bool = False) -> None:
+        """Показать состояние черновика.
+
+        Args:
+            text: текст статуса (например "сохранён 14:38" или "не сохранён")
+            dirty: есть ли несохранённые изменения
+        """
+        if dirty:
+            prefix = "●"
+            color = "#a06000"  # оранжевый — есть изменения
+        else:
+            prefix = "✓"
+            color = "#3a7a2a"  # зелёный — сохранено
+        self.draft_label.setText(f"{prefix} Черновик: {text}")
+        self.draft_label.setStyleSheet(f"color: {color}; font-size: 11px;")
 
     def refresh(self) -> None:
         """Пересчитать все счётчики на основе текущего состояния документа."""

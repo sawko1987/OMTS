@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
+from typing import Optional
 import re
 import logging
 
@@ -25,6 +26,9 @@ from app.gui.status_bar import StatusBarWidget
 from app.gui.wizard_sidebar import WizardSidebar, StepStatus
 from app.gui.preview_widget import PreviewWidget
 from app.gui.banned_replacements_dialog import BannedReplacementsDialog
+from app.gui.audit_log_dialog import AuditLogDialog
+from app.draft_manager import DraftManager
+from app.audit_log import AuditLog
 from app.config import PROJECT_ROOT, DATABASE_PATH, MONTHS
 from app.database import DatabaseManager
 from app.product_store import ProductStore
@@ -64,7 +68,15 @@ class MainWindow(QMainWindow):
         self.banned_store = BannedReplacementsStore(self.db_manager)  # [BAN_FEATURE]
         self.settings_manager = SettingsManager()
         self.document_store = DocumentStore(self.db_manager, self.catalog_loader)
-        
+
+        # Draft manager (autosave) — инициализируем ДО init_ui,
+        # чтобы можно было предложить восстановление при старте
+        self.draft_manager = DraftManager()
+        self._autosave_timer = None  # создаётся в init_ui
+
+        # Audit log — журнал действий пользователя (в памяти)
+        self.audit_log = AuditLog()
+
         self.init_ui()
         self.load_catalog()
 
@@ -199,13 +211,180 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Escape"), self, activated=self._shortcut_escape)
 
     def _shortcut_save_draft(self):
-        """Заглушка для будущего автосохранения черновика (Фаза 3)."""
-        QMessageBox.information(
+        """Ctrl+S — сохранить черновик вручную."""
+        self.save_draft(source="manual")
+
+    def save_draft(self, source: str = "manual") -> None:
+        """Сохранить текущий документ как черновик.
+
+        Args:
+            source: "auto" для автосохранения, "manual" для Ctrl+S
+        """
+        try:
+            self.draft_manager.save(self.document_data, source=source)
+            self._document_dirty = False
+            self._last_saved_at = datetime.now().isoformat(timespec="seconds")
+            self._refresh_draft_status_indicator()
+            if source == "manual":
+                from app.gui.toast import show_toast, ToastLevel
+                show_toast(self, "Черновик сохранён", ToastLevel.SUCCESS)
+                self.audit_log.info("save_draft", "Черновик сохранён вручную (Ctrl+S)")
+            logger.info(f"Черновик сохранён (source={source})")
+        except Exception as e:
+            logger.error(f"Ошибка сохранения черновика: {e}")
+            from app.gui.toast import show_toast, ToastLevel
+            show_toast(self, f"Не удалось сохранить черновик: {e}", ToastLevel.ERROR, timeout_ms=5000)
+            self.audit_log.error("save_draft", f"Ошибка: {e}")
+
+    def _autosave_tick(self) -> None:
+        """Тик таймера автосохранения: сохраняем только если есть изменения."""
+        if not self._document_dirty:
+            return
+        if not self.document_data.part_changes and not self.document_data.products:
+            # Пустой документ — не сохраняем, чтобы не замусоривать черновик
+            return
+        logger.debug("Автосохранение: есть изменения, сохраняю черновик")
+        self.save_draft(source="auto")
+
+    def _on_document_dirty(self, *_args) -> None:
+        """Пометить документ как содержащий несохранённые изменения."""
+        self._document_dirty = True
+        self._refresh_draft_status_indicator()
+
+    def _refresh_draft_status_indicator(self) -> None:
+        """Обновить индикатор черновика в статус-баре."""
+        if not hasattr(self, "status_bar_widget"):
+            return
+        if self._last_saved_at is None:
+            self.status_bar_widget.set_draft_status("не сохранён", dirty=self._document_dirty)
+        else:
+            try:
+                saved_dt = datetime.fromisoformat(self._last_saved_at)
+                time_str = saved_dt.strftime("%H:%M:%S")
+            except ValueError:
+                time_str = "??:??:??"
+            self.status_bar_widget.set_draft_status(
+                f"сохранён {time_str}",
+                dirty=self._document_dirty,
+            )
+
+    def _check_draft_on_startup(self) -> None:
+        """При старте: если есть свежий черновик, предложить восстановить."""
+        info = self.draft_manager.get_draft_info()
+        if info is None:
+            return
+        # Не предлагаем восстановление, если в черновике пусто
+        if info.part_count == 0 and not self.document_data.products:
+            self.draft_manager.discard()
+            return
+
+        age = info.age_human()
+        reply = QMessageBox.question(
             self,
-            "В разработке",
-            "Автосохранение черновика появится в Фазе 3.\n\n"
-            "Сейчас данные хранятся в памяти до явного сохранения через 'Сгенерировать документ'.",
+            "Восстановить черновик?",
+            f"Найден несохранённый черновик ({info.part_count} деталей, "
+            f"сохранён {age}).\n\n"
+            f"Восстановить его вместо пустого документа?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
         )
+        if reply == QMessageBox.Yes:
+            loaded = self.draft_manager.load(catalog_loader=self.catalog_loader)
+            if loaded:
+                self._replace_document_data(loaded)
+                from app.gui.toast import show_toast, ToastLevel
+                show_toast(self, "Черновик восстановлен", ToastLevel.SUCCESS, timeout_ms=4000)
+                self.audit_log.info(
+                    "restore_draft",
+                    f"Восстановлен черновик ({info.part_count} деталей, {info.age_human()})",
+                )
+                logger.info("Черновик восстановлен при старте")
+        else:
+            # Пользователь отказался — удаляем черновик
+            self.draft_manager.discard()
+
+    def _replace_document_data(self, new_data: DocumentData) -> None:
+        """Заменить текущий документ на новый (используется при восстановлении черновика)."""
+        self.document_data = new_data
+        self._last_used_date = new_data.implementation_date
+        self._last_used_validity_period = new_data.validity_period
+        self._last_used_year = new_data.document_year
+        # Состояние доп. страниц
+        max_page = 0
+        for pc in new_data.part_changes:
+            if pc.additional_page_number is not None:
+                max_page = max(max_page, pc.additional_page_number)
+        self.current_additional_page = None
+        self.next_additional_page = max_page + 1 if max_page > 0 else 1
+        # Применяем ко всем виджетам
+        self.doc_info_widget.document_data = self.document_data
+        self.changes_widget.document_data = self.document_data
+        self.replacement_sets_widget.document_data = self.document_data
+        self.doc_info_widget.refresh()
+        self.changes_widget.refresh()
+        self.changes_widget.update_product_filter()
+        self._document_dirty = False
+        self._last_saved_at = datetime.now().isoformat(timespec="seconds")
+        self._refresh_draft_status_indicator()
+
+    # ===== Импорт/экспорт черновика =====
+
+    def export_draft(self) -> None:
+        """Экспорт текущего документа в JSON-файл."""
+        if not self.document_data.part_changes and not self.document_data.products:
+            QMessageBox.information(
+                self, "Экспорт",
+                "Нечего экспортировать — документ пуст."
+            )
+            return
+        default_name = "izveshchenie_draft.json"
+        if self.document_data.get_display_number():
+            default_name = f"izveshchenie_{self.document_data.get_display_number()}.json"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Экспорт черновика",
+            str(PROJECT_ROOT / default_name),
+            "JSON файлы (*.json);;Все файлы (*)",
+        )
+        if not file_path:
+            return
+        try:
+            self.draft_manager.export_to(self.document_data, Path(file_path))
+            from app.gui.toast import show_toast, ToastLevel
+            show_toast(self, f"Экспортировано: {Path(file_path).name}", ToastLevel.SUCCESS)
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось экспортировать:\n{e}")
+
+    def import_draft(self) -> None:
+        """Импорт документа из JSON-файла."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Импорт черновика",
+            str(PROJECT_ROOT),
+            "JSON файлы (*.json);;Все файлы (*)",
+        )
+        if not file_path:
+            return
+        try:
+            loaded = self.draft_manager.import_from(Path(file_path), catalog_loader=self.catalog_loader)
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка импорта", f"Не удалось импортировать:\n{e}")
+            return
+        if loaded is None:
+            QMessageBox.warning(self, "Ошибка", "Файл повреждён или имеет неверный формат.")
+            return
+        # Подтверждение замены текущего документа
+        if self.document_data.part_changes or self.document_data.products:
+            reply = QMessageBox.question(
+                self, "Импорт черновика",
+                "Импорт заменит текущие данные документа. Продолжить?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+        self._replace_document_data(loaded)
+        from app.gui.toast import show_toast, ToastLevel
+        show_toast(self, f"Импортировано: {Path(file_path).name}", ToastLevel.SUCCESS)
+        logger.info(f"Документ импортирован из {file_path}")
 
     def _shortcut_escape(self):
         """Escape: сбросить активную доп. страницу (вернуться к основной)."""
@@ -265,9 +444,20 @@ class MainWindow(QMainWindow):
         # Меню "Документ"
         document_menu = menubar.addMenu("Документ")
         new_doc_action = document_menu.addAction("Новый документ")
+        new_doc_action.setShortcut(QKeySequence("Ctrl+N"))
         new_doc_action.triggered.connect(self.new_document)
         open_doc_action = document_menu.addAction("Открыть документ...")
+        open_doc_action.setShortcut(QKeySequence("Ctrl+O"))
         open_doc_action.triggered.connect(self.open_document)
+        document_menu.addSeparator()
+        save_draft_action = document_menu.addAction("Сохранить черновик")
+        save_draft_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_draft_action.triggered.connect(self.save_draft)
+        document_menu.addSeparator()
+        import_draft_action = document_menu.addAction("Импорт черновика из JSON...")
+        import_draft_action.triggered.connect(self.import_draft)
+        export_draft_action = document_menu.addAction("Экспорт черновика в JSON...")
+        export_draft_action.triggered.connect(self.export_draft)
         
         # Меню "Данные"
         data_menu = menubar.addMenu("Данные")
@@ -284,6 +474,11 @@ class MainWindow(QMainWindow):
         settings_menu = menubar.addMenu("Настройки")
         settings_action = settings_menu.addAction("Настройки...")
         settings_action.triggered.connect(self.show_settings)
+
+        # Меню "Журнал"
+        log_menu = menubar.addMenu("Журнал")
+        log_action = log_menu.addAction("📋 Журнал действий…")
+        log_action.triggered.connect(self.show_audit_log)
         
         # Центральный виджет
         central_widget = QWidget()
@@ -317,6 +512,7 @@ class MainWindow(QMainWindow):
         self.doc_info_widget.date_edit.dateChanged.connect(self._on_implementation_date_changed)
         self.doc_info_widget.validity_combo.currentTextChanged.connect(self._on_validity_period_changed)
         self.doc_info_widget.year_spin.valueChanged.connect(self._on_year_changed)
+        self.doc_info_widget.reason_edit.textChanged.connect(self._on_document_dirty)
         self.pages_stack.addWidget(self.doc_info_widget)
 
         # === Страница 2: Изменения материалов ===
@@ -365,6 +561,9 @@ class MainWindow(QMainWindow):
         self.replacement_sets_widget.document_data_changed.connect(self.preview_widget.refresh)
         self.changes_widget.document_data_changed.connect(self._update_wizard_step_status)
         self.replacement_sets_widget.document_data_changed.connect(self._update_wizard_step_status)
+        # Автосохранение — помечаем документ как «грязный» при любом изменении
+        self.changes_widget.document_data_changed.connect(self._on_document_dirty)
+        self.replacement_sets_widget.document_data_changed.connect(self._on_document_dirty)
         
         # Кнопки внизу — навигация по визарду + действия
         nav_layout = QHBoxLayout()
@@ -417,6 +616,18 @@ class MainWindow(QMainWindow):
 
         # Горячие клавиши
         self._setup_shortcuts()
+
+        # Автосохранение черновика каждые 30 сек (если есть изменения)
+        from PySide6.QtCore import QTimer
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(30_000)
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._autosave_timer.start()
+        self._document_dirty = False  # есть несохранённые изменения
+        self._last_saved_at: Optional[str] = None  # ISO-строка последнего сохранения
+
+        # Проверяем наличие черновика при старте
+        self._check_draft_on_startup()
     
     def load_catalog(self):
         """Загрузить каталог и обновить виджеты"""
@@ -532,6 +743,11 @@ class MainWindow(QMainWindow):
         self.refresh_status_bar()
         if hasattr(self, "preview_widget"):
             self.preview_widget.refresh()
+
+    def show_audit_log(self):
+        """Показать диалог журнала действий."""
+        dialog = AuditLogDialog(self.audit_log, self)
+        dialog.exec()
 
     def show_database_restore(self):
         """Показать диалог восстановления базы данных"""
@@ -814,7 +1030,18 @@ class MainWindow(QMainWindow):
             
             # Сохраняем документ в БД
             self.document_store.save_document(self.document_data, str(file_path))
-            
+
+            # Документ успешно сгенерирован — сбрасываем черновик
+            self.draft_manager.discard()
+            self._document_dirty = False
+            self._last_saved_at = None
+            self._refresh_draft_status_indicator()
+
+            self.audit_log.success(
+                "generate_document",
+                f"Сгенерирован документ {self.document_data.get_display_number()}: {file_path.name}",
+            )
+
             QMessageBox.information(self, "Успех", f"Документ успешно создан:\n{file_path}")
             
             # Автоматически открываем файл, если настройка включена
@@ -927,7 +1154,9 @@ class MainWindow(QMainWindow):
         
         # Создаём новый документ
         self.document_data = DocumentData()
-        
+
+        self.audit_log.info("new_document", "Создан новый документ")
+
         self._apply_last_used_date()
         
         self.current_additional_page = None  # Сбрасываем активную доп. страницу
@@ -939,6 +1168,11 @@ class MainWindow(QMainWindow):
         self.changes_widget.refresh()
         self.changes_widget.update_product_filter()
         self.refresh_status_bar()
+        # Сбрасываем индикатор черновика
+        self.draft_manager.discard()
+        self._document_dirty = False
+        self._last_saved_at = None
+        self._refresh_draft_status_indicator()
 
     def open_document(self):
         """Открыть существующий документ"""
@@ -983,6 +1217,12 @@ class MainWindow(QMainWindow):
                     self.changes_widget.update_product_filter()
                     display_num = self.document_data.get_display_number()
                     self.refresh_status_bar()
+                    # Загруженный документ из БД — сбрасываем черновик
+                    self.draft_manager.discard()
+                    self._document_dirty = False
+                    self._last_saved_at = None
+                    self._refresh_draft_status_indicator()
+                    self.audit_log.info("open_document", f"Открыт документ {display_num}")
                     QMessageBox.information(self, "Успех", f"Документ {display_num} загружен")
                 else:
                     QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить документ №{document_number}")
@@ -1060,6 +1300,7 @@ class MainWindow(QMainWindow):
         )
         
         if reply == QMessageBox.Yes:
+            self.audit_log.info("clear_data", "Данные документа очищены")
             self.document_data = DocumentData()
             self._apply_last_used_date()
             self.current_additional_page = None  # Сбрасываем активную доп. страницу
@@ -1069,4 +1310,8 @@ class MainWindow(QMainWindow):
             self.replacement_sets_widget.document_data = self.document_data
             self.doc_info_widget.refresh()
             self.changes_widget.refresh()
+            self.draft_manager.discard()
+            self._document_dirty = False
+            self._last_saved_at = None
+            self._refresh_draft_status_indicator()
             self.changes_widget.update_product_filter()
