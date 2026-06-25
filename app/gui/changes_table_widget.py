@@ -4,7 +4,8 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox,
     QTableWidget, QTableWidgetItem, QCheckBox, QHeaderView,
-    QMessageBox, QLabel, QLineEdit, QCompleter, QListWidget, QListWidgetItem
+    QMessageBox, QLabel, QLineEdit, QCompleter, QListWidget, QListWidgetItem,
+    QGroupBox
 )
 from PySide6.QtCore import Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QColor
@@ -55,26 +56,25 @@ class ChangesTableWidget(QWidget):
     def init_ui(self):
         """Инициализация интерфейса"""
         layout = QVBoxLayout(self)
-        
+
         # Заголовок
         title = QLabel("Изменения материалов по деталям")
         title.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
-        
-        # Выбор машин (изделий)
-        machines_label = QLabel("Выберите машины (изделия):")
-        machines_label.setStyleSheet("font-weight: bold;")
+
+        # === Секция: Машины (изделия) ===
+        machines_label = QLabel("🚜  Выберите машины (изделия):")
+        machines_label.setStyleSheet("font-weight: 600; font-size: 13px;")
         layout.addWidget(machines_label)
-        
+
         self.machines_list = QListWidget()
         self.machines_list.setMaximumHeight(120)
-        # Используем чекбоксы для множественного выбора
         self.machines_list.itemChanged.connect(self.on_machines_selection_changed)
         layout.addWidget(self.machines_list)
-        
+
         # Кнопка создания новой машины + быстрый выбор
         machine_buttons_layout = QHBoxLayout()
-        self.btn_create_machine = QPushButton("Создать новую машину")
+        self.btn_create_machine = QPushButton("+ Создать новую машину")
         self.btn_create_machine.clicked.connect(self.create_machine)
         machine_buttons_layout.addWidget(self.btn_create_machine)
 
@@ -90,33 +90,24 @@ class ChangesTableWidget(QWidget):
 
         machine_buttons_layout.addStretch()
         layout.addLayout(machine_buttons_layout)
-        
+
         # Информация о выбранных изделиях
         self.product_info_label = QLabel()
         self.product_info_label.setStyleSheet("color: #666; font-style: italic;")
         layout.addWidget(self.product_info_label)
-        
-        # Панель управления
-        control_layout = QVBoxLayout()
-        
-        # Поиск деталей
-        search_layout = QHBoxLayout()
-        search_layout.addWidget(QLabel("Поиск детали:"))
+
+        # === Секция: Поиск и выбор детали ===
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Введите код детали для поиска...")
+        self.search_edit.setPlaceholderText("🔍 Введите код детали для поиска или выберите из списка ниже…")
         self.search_edit.textChanged.connect(self.on_search_changed)
-        search_layout.addWidget(self.search_edit)
-        control_layout.addLayout(search_layout)
-        
-        # Выбор и добавление детали
-        add_layout = QHBoxLayout()
-        add_layout.addWidget(QLabel("Добавить деталь:"))
+        layout.addWidget(self.search_edit)
+
+        # Комбобокс с автодополнением (хранится как self.part_combo для обратной совместимости)
         self.part_combo = QComboBox()
         self.part_combo.setEditable(True)
         self.part_combo.setMinimumWidth(200)
         self.part_combo.currentTextChanged.connect(self.on_part_combo_changed)
-        
-        # Настраиваем автодополнение для комбобокса
+
         self.part_completer_model = QStringListModel()
         self.part_completer = QCompleter(self.part_completer_model, self)
         self.part_completer.setCaseSensitivity(Qt.CaseInsensitive)
@@ -124,59 +115,102 @@ class ChangesTableWidget(QWidget):
         self.part_completer.setFilterMode(Qt.MatchContains)
         self.part_completer.setMaxVisibleItems(10)
         self.part_combo.setCompleter(self.part_completer)
-        
-        # Обработчик для фильтрации при вводе в комбобокс
+
         line_edit = self.part_combo.lineEdit()
         if line_edit:
             line_edit.textEdited.connect(self.on_part_combo_text_edited)
-        
-        # Сохраняем полный список деталей для фильтрации
+
         self._all_parts_list: List[str] = []
-        
-        add_layout.addWidget(self.part_combo)
-        
-        self.btn_add_part = QPushButton("Добавить")
+        layout.addWidget(self.part_combo)
+
+        # === Панель: ДЕЙСТВИЯ С ДЕТАЛЬЮ (Деталь) ===
+        self.detail_group = QGroupBox("📦  Деталь")
+        dg_layout = QHBoxLayout(self.detail_group)
+        dg_layout.setContentsMargins(8, 6, 8, 6)
+
+        self.btn_add_part = QPushButton("＋ Добавить в документ")
+        self.btn_add_part.setToolTip("Добавить выбранную деталь в текущую (или активную доп.) страницу документа")
         self.btn_add_part.clicked.connect(self.add_part)
-        add_layout.addWidget(self.btn_add_part)
-        
-        self.btn_create_part = QPushButton("Создать новую деталь")
+        dg_layout.addWidget(self.btn_add_part)
+        dg_layout.addStretch()
+        layout.addWidget(self.detail_group)
+
+        # === Панель: ДЕЙСТВИЯ (управление деталью) ===
+        self.actions_group = QGroupBox("✏️  Действия")
+        ag_layout = QHBoxLayout(self.actions_group)
+        ag_layout.setContentsMargins(8, 6, 8, 6)
+
+        self.btn_create_part = QPushButton("📝 Создать деталь")
+        self.btn_create_part.setToolTip("Создать новую деталь в справочнике")
         self.btn_create_part.clicked.connect(self.create_part)
-        add_layout.addWidget(self.btn_create_part)
-        
-        self.btn_copy_and_edit = QPushButton("Копировать и редактировать")
+        ag_layout.addWidget(self.btn_create_part)
+
+        self.btn_copy_and_edit = QPushButton("📋 Копировать")
+        self.btn_copy_and_edit.setToolTip("Создать копию выбранной детали со всеми материалами")
         self.btn_copy_and_edit.clicked.connect(self.copy_and_edit_part)
-        add_layout.addWidget(self.btn_copy_and_edit)
-        
-        self.btn_edit_set = QPushButton("Редактировать набор материалов")
+        ag_layout.addWidget(self.btn_copy_and_edit)
+
+        self.btn_edit_set = QPushButton("✏️ Редактировать набор")
+        self.btn_edit_set.setToolTip("Редактировать набор материалов выбранной детали")
         self.btn_edit_set.clicked.connect(self.edit_replacement_set)
-        add_layout.addWidget(self.btn_edit_set)
-        
-        add_layout.addStretch()
-        
-        self.btn_remove_part = QPushButton("Удалить деталь")
+        ag_layout.addWidget(self.btn_edit_set)
+        ag_layout.addStretch()
+        layout.addWidget(self.actions_group)
+
+        # === Панель: УПРАВЛЕНИЕ (опасно) ===
+        self.danger_group = QGroupBox("⚠  Управление (требует подтверждения)")
+        self.danger_group.setStyleSheet(
+            "QGroupBox { border: 1px solid #f0c0c0; border-radius: 4px; "
+            "margin-top: 12px; padding-top: 8px; background-color: #fdf5f5; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; "
+            "padding: 0 6px; color: #a02020; font-weight: 600; }"
+        )
+        dz_layout = QHBoxLayout(self.danger_group)
+        dz_layout.setContentsMargins(8, 6, 8, 6)
+
+        self.btn_remove_part = QPushButton("🗑 Удалить деталь")
+        self.btn_remove_part.setStyleSheet("color: #a02020; border-color: #f0a0a0;")
         self.btn_remove_part.clicked.connect(self.remove_selected_part)
-        add_layout.addWidget(self.btn_remove_part)
-        
-        self.btn_remove_row = QPushButton("Удалить строку")
+        dz_layout.addWidget(self.btn_remove_part)
+
+        self.btn_remove_row = QPushButton("🗑 Удалить строку")
+        self.btn_remove_row.setStyleSheet("color: #a02020; border-color: #f0a0a0;")
         self.btn_remove_row.clicked.connect(self.remove_selected_row)
-        add_layout.addWidget(self.btn_remove_row)
-        
-        self.btn_delete_part_from_db = QPushButton("Удалить деталь из БД")
-        self.btn_delete_part_from_db.clicked.connect(self.delete_part_from_database)
-        add_layout.addWidget(self.btn_delete_part_from_db)
-        
-        # [BAN_FEATURE] Кнопка запрета замены
+        dz_layout.addWidget(self.btn_remove_row)
+
         self.btn_ban_material = QPushButton("⛔ Запретить замену")
         self.btn_ban_material.setToolTip(
             "Пометить выбранный материал как запрещённый к замене (по решению конструктора)"
         )
         self.btn_ban_material.clicked.connect(self.ban_selected_material)
-        add_layout.addWidget(self.btn_ban_material)
-        
-        control_layout.addLayout(add_layout)
-        layout.addLayout(control_layout)
-        
-        # Таблица
+        dz_layout.addWidget(self.btn_ban_material)
+
+        self.btn_delete_part_from_db = QPushButton("⚠️ Удалить деталь из БД")
+        self.btn_delete_part_from_db.setStyleSheet(
+            "color: #ffffff; background-color: #a02020; border: 1px solid #801010;"
+        )
+        self.btn_delete_part_from_db.setToolTip(
+            "Полностью удалить деталь из базы данных вместе с наборами и привязками. "
+            "Это действие нельзя отменить!"
+        )
+        self.btn_delete_part_from_db.clicked.connect(self.delete_part_from_database)
+        dz_layout.addWidget(self.btn_delete_part_from_db)
+        dz_layout.addStretch()
+        layout.addWidget(self.danger_group)
+
+        # === Breadcrumb доп. страниц ===
+        self.pages_breadcrumb = QWidget()
+        pbl = QHBoxLayout(self.pages_breadcrumb)
+        pbl.setContentsMargins(0, 4, 0, 4)
+        pbl.setSpacing(4)
+        pbl.addWidget(QLabel("📄 Страницы:"))
+        self.pages_buttons_layout = QHBoxLayout()
+        self.pages_buttons_layout.setSpacing(4)
+        pbl.addLayout(self.pages_buttons_layout)
+        pbl.addStretch()
+        layout.addWidget(self.pages_breadcrumb)
+
+        # === Таблица ===
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
@@ -190,8 +224,9 @@ class ChangesTableWidget(QWidget):
             "Материал 'после'",
             "Страница"
         ])
-        
-        # Настройка таблицы
+        # Колонка "Тип" (индекс 2) всегда пустая — скрываем, чтобы не занимала место.
+        self.table.setColumnHidden(2, True)
+
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -202,7 +237,7 @@ class ChangesTableWidget(QWidget):
         header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(7, QHeaderView.Stretch)
         header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
-        
+
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.itemChanged.connect(self.on_item_changed)
@@ -215,7 +250,85 @@ class ChangesTableWidget(QWidget):
         # Загружаем список деталей при инициализации
         self.load_machines_list()
         self.load_parts_list()
-    
+
+    def refresh_pages_breadcrumb(self):
+        """Перестроить breadcrumb доп. страниц на основе текущего состояния документа."""
+        # Очищаем старые кнопки
+        while self.pages_buttons_layout.count():
+            item = self.pages_buttons_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        # Считаем существующие доп. страницы
+        max_page = 0
+        for pc in self.document_data.part_changes:
+            if pc.additional_page_number is not None:
+                max_page = max(max_page, pc.additional_page_number)
+
+        # Кнопка "Страница 1" (основная)
+        active_page = self.get_current_additional_page() if hasattr(self, "get_current_additional_page") else None
+        btn_main = self._make_page_button("Стр. 1", page_num=None, is_active=(active_page is None))
+        self.pages_buttons_layout.addWidget(btn_main)
+
+        # Кнопки для каждой существующей доп. страницы
+        for page_num in range(1, max_page + 1):
+            label = f"Стр. {page_num + 1}+"
+            btn = self._make_page_button(label, page_num=page_num, is_active=(active_page == page_num))
+            self.pages_buttons_layout.addWidget(btn)
+
+        # Кнопка "+ Добавить страницу"
+        btn_add = QPushButton("＋ Добавить страницу")
+        btn_add.setCursor(Qt.PointingHandCursor)
+        btn_add.setStyleSheet(
+            "QPushButton {"
+            "  color: #2a6da8; background: transparent; "
+            "  border: 1px dashed #b8d0e8; border-radius: 4px;"
+            "  padding: 4px 10px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background-color: #e8f0fa; }"
+        )
+        btn_add.clicked.connect(self._request_new_additional_page)
+        self.pages_buttons_layout.addWidget(btn_add)
+
+    def _make_page_button(self, label: str, page_num, is_active: bool) -> QPushButton:
+        """Создать кнопку-таб для breadcrumb."""
+        btn = QPushButton(label)
+        btn.setCheckable(True)
+        btn.setChecked(is_active)
+        btn.setCursor(Qt.PointingHandCursor)
+        if is_active:
+            btn.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #2a6da8; color: #ffffff;"
+                "  border: 1px solid #1f568a; border-radius: 4px;"
+                "  padding: 4px 12px; font-size: 12px; font-weight: 600;"
+                "}"
+            )
+        else:
+            btn.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #f0f4f8; color: #444;"
+                "  border: 1px solid #d0d7de; border-radius: 4px;"
+                "  padding: 4px 12px; font-size: 12px;"
+                "}"
+                "QPushButton:hover { background-color: #e0e8f0; }"
+            )
+        btn.clicked.connect(lambda _checked=False, p=page_num: self._switch_to_page(p))
+        return btn
+
+    def _switch_to_page(self, page_num) -> None:
+        """Переключиться на указанную страницу (None = основная)."""
+        setter = getattr(self, "set_current_additional_page", None)
+        if callable(setter):
+            setter(page_num)
+
+    def _request_new_additional_page(self) -> None:
+        """Запросить у главного окна создание новой доп. страницы."""
+        requester = getattr(self, "request_new_additional_page", None)
+        if callable(requester):
+            requester()
+
     def load_machines_list(self):
         """Загрузить список машин (изделий) в виджет"""
         if not self.product_store:
@@ -1082,7 +1195,9 @@ class ChangesTableWidget(QWidget):
         """Обновить таблицу"""
         # Обновляем список машин
         self.load_machines_list()
-        
+        # Обновляем breadcrumb доп. страниц
+        self.refresh_pages_breadcrumb()
+
         self.table.setRowCount(0)
         
         row = 0

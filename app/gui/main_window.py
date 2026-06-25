@@ -2,8 +2,9 @@
 Главное окно приложения
 """
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
     QPushButton, QLabel, QMessageBox, QFileDialog, QMenuBar, QMenu,
+    QFrame,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -21,6 +22,9 @@ from app.gui.settings_dialog import SettingsDialog
 from app.gui.product_parts_binding_dialog import ProductPartsBindingDialog
 from app.gui.database_restore_dialog import DatabaseRestoreDialog
 from app.gui.status_bar import StatusBarWidget
+from app.gui.wizard_sidebar import WizardSidebar, StepStatus
+from app.gui.preview_widget import PreviewWidget
+from app.gui.banned_replacements_dialog import BannedReplacementsDialog
 from app.config import PROJECT_ROOT, DATABASE_PATH, MONTHS
 from app.database import DatabaseManager
 from app.product_store import ProductStore
@@ -78,6 +82,94 @@ class MainWindow(QMainWindow):
         if qdate and qdate.isValid():
             self._last_used_date = qdate.toPython()
 
+    # ----- Навигация по визарду -----
+
+    def _on_wizard_step_selected(self, index: int) -> None:
+        """Переключить активную страницу визарда."""
+        if not hasattr(self, "pages_stack"):
+            return
+        if 0 <= index < self.pages_stack.count():
+            self.pages_stack.setCurrentIndex(index)
+            self.sidebar.set_current(index)
+            self._update_nav_buttons()
+            self._update_wizard_step_status()
+            # Обновляем preview при заходе на шаг 4
+            if index == 3 and hasattr(self, "preview_widget"):
+                self.preview_widget.refresh()
+
+    def _wizard_prev(self) -> None:
+        """Перейти на предыдущий шаг."""
+        cur = self.pages_stack.currentIndex()
+        if cur > 0:
+            self._on_wizard_step_selected(cur - 1)
+
+    def _wizard_next(self) -> None:
+        """Перейти на следующий шаг."""
+        cur = self.pages_stack.currentIndex()
+        last = self.pages_stack.count() - 1
+        if cur < last:
+            self._on_wizard_step_selected(cur + 1)
+
+    def _update_nav_buttons(self) -> None:
+        """Включить/выключить кнопки Назад/Далее в зависимости от позиции."""
+        if not hasattr(self, "pages_stack"):
+            return
+        cur = self.pages_stack.currentIndex()
+        last = self.pages_stack.count() - 1
+        self.btn_prev_step.setEnabled(cur > 0)
+        self.btn_next_step.setEnabled(cur < last)
+
+    def _update_wizard_step_status(self) -> None:
+        """Обновить статус шагов визарда (готово/предупреждение) на основе данных документа."""
+        if not hasattr(self, "sidebar"):
+            return
+        data = self.document_data
+
+        # Шаг 0: Шапка — готово, если заполнена дата
+        if data.implementation_date:
+            self.sidebar.set_step_status(0, StepStatus.DONE)
+        else:
+            self.sidebar.set_step_status(0, StepStatus.WARNING)
+
+        # Шаг 1: Материалы — готово, если есть хотя бы одна замена
+        has_replacement = any(
+            m.is_changed and (m.after_name or "").strip()
+            for pc in data.part_changes
+            for m in pc.materials
+        )
+        if has_replacement:
+            self.sidebar.set_step_status(1, StepStatus.DONE)
+        elif data.part_changes:
+            self.sidebar.set_step_status(1, StepStatus.WARNING)
+        else:
+            self.sidebar.set_step_status(1, StepStatus.PENDING)
+
+        # Шаг 2: Наборы — всегда optional, помечаем done если были изменения в этом сеансе
+        # (пока просто pending — здесь сложно отследить "был ли пользователь здесь")
+        # Шаг 3: Предпросмотр — готово к генерации если всё заполнено
+        can_generate = bool(data.implementation_date and data.part_changes and data.products)
+        active_bans = 0
+        if self.banned_store:
+            for pc in data.part_changes:
+                for m in pc.materials:
+                    if m.is_changed and (m.after_name or "").strip():
+                        if self.banned_store.is_banned(m.catalog_entry, (m.after_name or "").strip()):
+                            active_bans += 1
+        if active_bans > 0:
+            self.sidebar.set_step_status(3, StepStatus.ERROR)
+            self.sidebar.set_hint(f"⚠ {active_bans} активных запрет(ов) — нужно снять или убрать замену")
+        elif can_generate:
+            self.sidebar.set_step_status(3, StepStatus.DONE)
+            self.sidebar.set_hint("✓ Готово к генерации")
+        else:
+            self.sidebar.set_step_status(3, StepStatus.WARNING)
+            if not data.implementation_date:
+                self.sidebar.set_hint("⚠ Укажите дату внедрения (Шаг 1)")
+            elif not data.part_changes:
+                self.sidebar.set_hint("⚠ Добавьте хотя бы одну деталь (Шаг 2)")
+            elif not data.products:
+                self.sidebar.set_hint("⚠ Выберите изделия (Шаг 2)")
+
     def _on_validity_period_changed(self, text):
         """Сохранять последний введённый срок действия до перезапуска приложения."""
         value = text.strip()
@@ -134,8 +226,12 @@ class MainWindow(QMainWindow):
             "  Ctrl+Shift+Del — Очистить данные\n"
             "  Esc — Сбросить активную доп. страницу\n"
             "  F1 — Эта справка\n\n"
+            "Навигация по визарду:\n"
+            "  Кнопки «← Назад» / «Далее →» внизу окна\n"
+            "  Шаги в сайдбаре слева\n\n"
             "В таблицах:\n"
-            "  Delete — удалить выбранные строки (в наборах)",
+            "  Delete — удалить выбранные строки (в наборах)\n"
+            "  Правый клик — групповые операции (в материалах)",
         )
 
     def refresh_status_bar(self):
@@ -179,6 +275,8 @@ class MainWindow(QMainWindow):
         import_parsing_action.triggered.connect(self.import_parsing_file)
         binding_action = data_menu.addAction("Привязки деталей к изделиям...")
         binding_action.triggered.connect(self.show_product_parts_binding)
+        banned_action = data_menu.addAction("⛔ Запреты замен материалов…")
+        banned_action.triggered.connect(self.show_banned_replacements)
         data_menu.addSeparator()
         restore_action = data_menu.addAction("Восстановить базу данных...")
         restore_action.triggered.connect(self.show_database_restore)
@@ -190,22 +288,38 @@ class MainWindow(QMainWindow):
         # Центральный виджет
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
+
         # Основной layout
         main_layout = QVBoxLayout(central_widget)
-        
-        # Вкладки
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-        
-        # Вкладка 1: Реквизиты документа
+
+        # === Wizard: сайдбар + QStackedWidget ===
+        wizard_layout = QHBoxLayout()
+        wizard_layout.setSpacing(0)
+
+        self.sidebar = WizardSidebar([
+            "Шапка документа",
+            "Материалы",
+            "Наборы",
+            "Предпросмотр",
+        ])
+        self.sidebar.step_selected.connect(self._on_wizard_step_selected)
+        wizard_layout.addWidget(self.sidebar)
+
+        # Контейнер страниц
+        self.pages_stack = QStackedWidget()
+        self.pages_stack.setFrameShape(QFrame.NoFrame)
+        wizard_layout.addWidget(self.pages_stack, 1)
+
+        main_layout.addLayout(wizard_layout, 1)
+
+        # === Страница 1: Реквизиты документа ===
         self.doc_info_widget = DocumentInfoWidget(self.document_data, self.product_store, self.db_manager)
         self.doc_info_widget.date_edit.dateChanged.connect(self._on_implementation_date_changed)
         self.doc_info_widget.validity_combo.currentTextChanged.connect(self._on_validity_period_changed)
         self.doc_info_widget.year_spin.valueChanged.connect(self._on_year_changed)
-        self.tabs.addTab(self.doc_info_widget, "Реквизиты документа")
-        
-        # Вкладка 2: Таблица изменений
+        self.pages_stack.addWidget(self.doc_info_widget)
+
+        # === Страница 2: Изменения материалов ===
         self.changes_widget = ChangesTableWidget(
             self.document_data,
             self.catalog_loader,
@@ -215,9 +329,13 @@ class MainWindow(QMainWindow):
         )
         # Передаём функцию для получения текущего номера доп. страницы
         self.changes_widget.get_current_additional_page = lambda: self.current_additional_page
-        self.tabs.addTab(self.changes_widget, "Изменения материалов")
+        # Колбэк из breadcrumb: установить активную доп. страницу (или None для основной)
+        self.changes_widget.set_current_additional_page = self._set_current_additional_page
+        # Колбэк из breadcrumb: пользователь нажал "+ Добавить страницу"
+        self.changes_widget.request_new_additional_page = self.add_additional_page_data
+        self.pages_stack.addWidget(self.changes_widget)
 
-        # Вкладка 3: Наборы
+        # === Страница 3: Наборы ===
         self.replacement_sets_widget = ReplacementSetsEditorWidget(
             self.catalog_loader,
             document_data=self.document_data,
@@ -228,32 +346,68 @@ class MainWindow(QMainWindow):
             get_current_additional_page=lambda: self.current_additional_page,
             changes_widget=self.changes_widget
         )
-        self.tabs.addTab(self.replacement_sets_widget, "Наборы")
+        self.pages_stack.addWidget(self.replacement_sets_widget)
 
-        # Синхронизация выбора детали: вкладка «Изменения материалов» -> «Наборы»
+        # === Страница 4: Предпросмотр ===
+        self.preview_widget = PreviewWidget(
+            self.document_data, banned_store=self.banned_store
+        )
+        self.preview_widget.goto_materials.connect(lambda: self._on_wizard_step_selected(1))
+        self.preview_widget.request_generate.connect(self.generate_document)
+        self.pages_stack.addWidget(self.preview_widget)
+
+        # Синхронизация выбора детали: страница «Материалы» -> «Наборы»
         self.changes_widget.part_selected.connect(self.replacement_sets_widget.set_part)
-        # Обновление статус-бара при изменении данных документа
+        # Обновление статус-бара и предпросмотра при изменении данных документа
         self.changes_widget.document_data_changed.connect(self.refresh_status_bar)
         self.replacement_sets_widget.document_data_changed.connect(self.refresh_status_bar)
+        self.changes_widget.document_data_changed.connect(self.preview_widget.refresh)
+        self.replacement_sets_widget.document_data_changed.connect(self.preview_widget.refresh)
+        self.changes_widget.document_data_changed.connect(self._update_wizard_step_status)
+        self.replacement_sets_widget.document_data_changed.connect(self._update_wizard_step_status)
         
-        # Кнопки внизу
-        button_layout = QHBoxLayout()
-        
-        self.btn_generate = QPushButton("Сгенерировать документ")
-        self.btn_generate.clicked.connect(self.generate_document)
-        button_layout.addWidget(self.btn_generate)
-        
-        self.btn_add_additional_page = QPushButton("Добавить данные для доп. страницы")
-        self.btn_add_additional_page.clicked.connect(self.add_additional_page_data)
-        button_layout.addWidget(self.btn_add_additional_page)
-        
-        self.btn_clear = QPushButton("Очистить")
-        self.btn_clear.clicked.connect(self.clear_data)
-        button_layout.addWidget(self.btn_clear)
-        
-        button_layout.addStretch()
+        # Кнопки внизу — навигация по визарду + действия
+        nav_layout = QHBoxLayout()
 
-        main_layout.addLayout(button_layout)
+        self.btn_prev_step = QPushButton("← Назад")
+        self.btn_prev_step.clicked.connect(self._wizard_prev)
+        nav_layout.addWidget(self.btn_prev_step)
+
+        self.btn_next_step = QPushButton("Далее →")
+        self.btn_next_step.clicked.connect(self._wizard_next)
+        nav_layout.addWidget(self.btn_next_step)
+
+        nav_layout.addSpacing(20)
+
+        self.btn_generate = QPushButton("📄 Сгенерировать документ")
+        self.btn_generate.setProperty("primary", True)
+        self.btn_generate.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #2a6da8; color: #ffffff; "
+            "  border: 1px solid #1f568a; border-radius: 4px;"
+            "  padding: 6px 18px; font-weight: 600;"
+            "}"
+            "QPushButton:hover { background-color: #3480c2; }"
+            "QPushButton:pressed { background-color: #1f568a; }"
+        )
+        self.btn_generate.clicked.connect(self.generate_document)
+        nav_layout.addWidget(self.btn_generate)
+
+        self.btn_add_additional_page = QPushButton("+ Доп. страница")
+        self.btn_add_additional_page.setToolTip(
+            "Добавить данные для следующей дополнительной страницы документа "
+            "(Esc — вернуться на основную)"
+        )
+        self.btn_add_additional_page.clicked.connect(self.add_additional_page_data)
+        nav_layout.addWidget(self.btn_add_additional_page)
+
+        nav_layout.addStretch()
+
+        self.btn_clear = QPushButton("🧹 Очистить")
+        self.btn_clear.clicked.connect(self.clear_data)
+        nav_layout.addWidget(self.btn_clear)
+
+        main_layout.addLayout(nav_layout)
 
         # Статус-бар внизу окна (счётчики документа, состояние БД)
         self.status_bar_widget = StatusBarWidget(
@@ -367,9 +521,18 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
         
-        # Обновляем каталог, так как могли измениться привязки
+# Обновляем каталог, так как могли измениться привязки
         self.load_catalog()
-    
+
+    def show_banned_replacements(self):
+        """Показать диалог управления всеми запретами замены."""
+        dialog = BannedReplacementsDialog(self.banned_store, self)
+        dialog.exec()
+        # После закрытия диалога могли снять запреты — обновляем статус-бар и предпросмотр
+        self.refresh_status_bar()
+        if hasattr(self, "preview_widget"):
+            self.preview_widget.refresh()
+
     def show_database_restore(self):
         """Показать диалог восстановления базы данных"""
         reply = QMessageBox.warning(
@@ -455,12 +618,12 @@ class MainWindow(QMainWindow):
         # Валидация
         if not self.document_data.implementation_date:
             QMessageBox.warning(self, "Ошибка", "Укажите дату внедрения замены")
-            self.tabs.setCurrentIndex(0)
+            self._on_wizard_step_selected(0)
             return
         
         if not self.document_data.part_changes:
             QMessageBox.warning(self, "Ошибка", "Добавьте хотя бы одну деталь с изменениями")
-            self.tabs.setCurrentIndex(1)
+            self._on_wizard_step_selected(1)
             return
         
         # Проверяем, что есть хотя бы одно изменение
@@ -489,7 +652,7 @@ class MainWindow(QMainWindow):
                 error_msg += "Отметьте чекбокс 'Меняем' для хотя бы одного материала и укажите материал 'после'."
             
             QMessageBox.warning(self, "Ошибка", error_msg)
-            self.tabs.setCurrentIndex(1)
+            self._on_wizard_step_selected(1)
             return
 
         # [BAN_FEATURE] Проверка на запрещённые замены
@@ -510,7 +673,7 @@ class MainWindow(QMainWindow):
                 error_msg += f"  ... и ещё {len(banned_found) - 10}\n"
             error_msg += "\nСнимите запрет во вкладке «Изменения материалов» или уберите замену для указанных материалов."
             QMessageBox.warning(self, "Ошибка", error_msg)
-            self.tabs.setCurrentIndex(1)
+            self._on_wizard_step_selected(1)
             return
         
         if not self.ensure_products_selected_for_generation():
@@ -733,17 +896,17 @@ class MainWindow(QMainWindow):
                 "Ошибка",
                 "Нет доступных машин. Сначала создайте хотя бы одну машину на вкладке 'Изменения материалов'."
             )
-            self.tabs.setCurrentIndex(1)
+            self._on_wizard_step_selected(1)
             return False
 
         dialog = MachineSelectionDialog(products, self)
         if not dialog.exec():
-            self.tabs.setCurrentIndex(1)
+            self._on_wizard_step_selected(1)
             return False
 
         selected_products = dialog.get_selected_products()
         if not selected_products:
-            self.tabs.setCurrentIndex(1)
+            self._on_wizard_step_selected(1)
             return False
 
         self.changes_widget.set_selected_products(selected_products)
@@ -823,7 +986,19 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(self, "Успех", f"Документ {display_num} загружен")
                 else:
                     QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить документ №{document_number}")
-    
+
+    def _set_current_additional_page(self, page) -> None:
+        """Установить активную дополнительную страницу (None = основная)."""
+        self.current_additional_page = page
+        if hasattr(self, "changes_widget"):
+            self.changes_widget.refresh_pages_breadcrumb()
+            self.changes_widget.refresh()
+        if hasattr(self, "status_bar_widget"):
+            if page is None:
+                self.status_bar_widget.set_ready_text("Активна основная страница")
+            else:
+                self.status_bar_widget.set_ready_text(f"Активна доп. страница {page}+")
+
     def add_additional_page_data(self):
         """Добавить данные для дополнительной страницы"""
         logger = logging.getLogger(__name__)
@@ -871,7 +1046,7 @@ class MainWindow(QMainWindow):
         
         if reply == QMessageBox.Yes:
             # Переключаемся на вкладку изменений материалов
-            self.tabs.setCurrentIndex(1)
+            self._on_wizard_step_selected(1)
             # Фокусируемся на виджете изменений
             self.changes_widget.setFocus()
     
