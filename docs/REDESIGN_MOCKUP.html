@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>OMTS — Макет редизайна</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Inter", system-ui, sans-serif;
+    background: #f4f5f7;
+    color: #1f2329;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  h2 { font-size: 18px; margin: 32px 0 12px; color: #2a6da8; }
+  h3 { font-size: 14px; margin: 16px 0 8px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+  p, li { font-size: 14px; }
+  .meta { color: #666; margin-bottom: 24px; }
+
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .panel {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .panel.old { background: #fafafa; }
+  .panel.new { background: #fff; border-color: #2a6da8; }
+  .panel-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: #888;
+    margin-bottom: 12px;
+    letter-spacing: 0.5px;
+  }
+  .panel.old .panel-title { color: #c00; }
+  .panel.new .panel-title { color: #2a6da8; }
+
+  /* ============== MOCKUP WINDOW ============== */
+  .window {
+    background: #fff;
+    border: 1px solid #c0c8d0;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  }
+  .titlebar {
+    background: linear-gradient(180deg, #f0f4f8 0%, #d8e0e8 100%);
+    border-bottom: 1px solid #b0b8c0;
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    color: #333;
+  }
+  .titlebar .title { flex: 1; font-weight: 600; }
+  .titlebar .controls span {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    margin-left: 6px;
+    border: 1px solid #888;
+  }
+  .titlebar .controls .min { background: #ffbd2e; }
+  .titlebar .controls .max { background: #28c941; }
+  .titlebar .controls .close { background: #ff5f57; }
+
+  .menubar {
+    background: #f5f7fa;
+    border-bottom: 1px solid #d0d7de;
+    padding: 4px 12px;
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+  }
+  .menubar .menu { padding: 4px 8px; cursor: default; }
+  .menubar .menu.active { background: #e0e8f0; border-radius: 3px; }
+
+  .toolbar {
+    background: #fafbfc;
+    border-bottom: 1px solid #e0e4e8;
+    padding: 8px 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .tool-btn {
+    background: #fff;
+    border: 1px solid #c0c8d0;
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: default;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .tool-btn.primary {
+    background: #2a6da8;
+    color: #fff;
+    border-color: #1f568a;
+  }
+  .tool-btn .icon { font-size: 14px; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .search {
+    background: #fff;
+    border: 1px solid #c0c8d0;
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 12px;
+    width: 220px;
+  }
+  .draft-status {
+    font-size: 11px;
+    color: #5a8a3a;
+    padding: 3px 8px;
+    background: #e8f5e0;
+    border-radius: 3px;
+    border: 1px solid #c0e0a0;
+  }
+
+  .main-area {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    min-height: 380px;
+  }
+  .sidebar {
+    background: #f8fafc;
+    border-right: 1px solid #e0e4e8;
+    padding: 16px 0;
+  }
+  .sidebar-item {
+    padding: 12px 16px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    cursor: default;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sidebar-item.active {
+    background: #fff;
+    border-left-color: #2a6da8;
+    font-weight: 600;
+    color: #2a6da8;
+  }
+  .sidebar-item .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #c0c8d0;
+  }
+  .sidebar-item.done .dot { background: #5a8a3a; }
+  .sidebar-item.active .dot { background: #2a6da8; }
+
+  .content {
+    padding: 20px;
+    background: #fff;
+  }
+  .content h2 {
+    font-size: 16px;
+    margin-bottom: 16px;
+    color: #1f2329;
+  }
+
+  /* ============== STEPPER (page breadcrumb) ============== */
+  .page-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #e0e4e8;
+    padding-bottom: 0;
+  }
+  .page-tab {
+    padding: 8px 16px;
+    font-size: 13px;
+    background: #f5f7fa;
+    border: 1px solid #d0d7de;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    cursor: default;
+  }
+  .page-tab.active {
+    background: #fff;
+    border-color: #2a6da8;
+    color: #2a6da8;
+    font-weight: 600;
+    border-bottom: 1px solid #fff;
+    margin-bottom: -1px;
+  }
+  .page-tab.add {
+    color: #2a6da8;
+    background: transparent;
+    border: 1px dashed #c0c8d0;
+  }
+
+  /* ============== FORM (step 1) ============== */
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 20px;
+    max-width: 720px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .field label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .field .value, .field input, .field textarea {
+    padding: 6px 10px;
+    border: 1px solid #c0c8d0;
+    border-radius: 4px;
+    font-size: 13px;
+    background: #fff;
+  }
+  .field .value.computed {
+    background: #f0f4f8;
+    font-weight: 600;
+    color: #2a6da8;
+    border-color: #b8c8d8;
+  }
+  .field .templates {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .chip {
+    padding: 2px 8px;
+    background: #e8f0f8;
+    color: #2a6da8;
+    border-radius: 12px;
+    font-size: 11px;
+    border: 1px solid #b8d0e8;
+    cursor: default;
+  }
+  .numbering-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #e8f5e0;
+    color: #5a8a3a;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 8px;
+  }
+
+  /* ============== BUTTON GROUPS (step 2) ============== */
+  .btn-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .btn-group {
+    border: 1px solid #e0e4e8;
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: #fafbfc;
+  }
+  .btn-group.danger {
+    border-color: #f0c0c0;
+    background: #fdf5f5;
+  }
+  .btn-group .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: #888;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+  .btn-group.danger .label { color: #c00; }
+  .btn-group .buttons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    background: #fff;
+    border: 1px solid #c0c8d0;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: default;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .btn:hover { background: #f0f4f8; }
+  .btn.danger-btn { border-color: #f0a0a0; color: #c00; }
+  .btn.danger-btn:hover { background: #fde0e0; }
+  .btn.primary {
+    background: #2a6da8;
+    color: #fff;
+    border-color: #1f568a;
+  }
+
+  /* ============== TABLE ============== */
+  .tbl {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .tbl th {
+    background: #f0f4f8;
+    text-align: left;
+    padding: 7px 10px;
+    font-weight: 600;
+    border-bottom: 1px solid #d0d7de;
+    font-size: 11px;
+    color: #555;
+  }
+  .tbl td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #e8ecf0;
+  }
+  .tbl tr.banned { background: #ffe8e8; }
+  .tbl tr.additional { background: #e8f0fa; }
+  .tbl tr:hover { background: #f8fafc; }
+  .checkbox-cell { text-align: center; }
+  .checkbox { display: inline-block; width: 14px; height: 14px; border: 1px solid #888; border-radius: 2px; vertical-align: middle; background: #fff; }
+  .checkbox.checked { background: #2a6da8; border-color: #2a6da8; color: #fff; text-align: center; line-height: 12px; font-size: 10px; }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 10px;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  .badge.ok { background: #e0f0e0; color: #3a7a2a; }
+  .badge.warn { background: #fff0d0; color: #a06000; }
+  .badge.ban { background: #ffd0d0; color: #c00; }
+
+  /* ============== STATUS BAR ============== */
+  .statusbar {
+    background: #f0f4f8;
+    border-top: 1px solid #d0d7de;
+    padding: 6px 12px;
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+    color: #555;
+  }
+  .statusbar .item { display: inline-flex; align-items: center; gap: 4px; }
+  .statusbar .ok { color: #3a7a2a; }
+  .statusbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #c0c8d0; }
+  .statusbar .ok .dot { background: #5a8a3a; }
+
+  .footer-btns {
+    padding: 12px;
+    background: #f8fafc;
+    border-top: 1px solid #e0e4e8;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .footer-btns .left, .footer-btns .right { display: flex; gap: 8px; }
+
+  /* ============== OLD VERSION MARKERS ============== */
+  .old-row {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .old-row .btn { font-size: 11px; padding: 4px 8px; }
+  .old-row .btn.emoji { background: #fff0d0; border-color: #d8b070; }
+  .old-row .btn.danger { background: #ffd0d0; border-color: #c08080; color: #800; }
+
+  /* ============== LEGEND ============== */
+  .legend {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    padding: 16px;
+    margin-top: 24px;
+  }
+  .legend ul { padding-left: 20px; }
+  .legend li { margin-bottom: 6px; }
+
+  .pillbox {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    margin: 6px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pillbox .icon { font-size: 16px; }
+  .pillbox.todo { border-left: 4px solid #f0a000; background: #fffaf0; }
+  .pillbox.warn { border-left: 4px solid #c00; background: #fff5f5; }
+
+  .annotation {
+    color: #2a6da8;
+    font-size: 11px;
+    font-style: italic;
+    margin-top: 4px;
+  }
+  .annotation.warn { color: #c00; }
+
+  /* dark theme preview */
+  .dark {
+    background: #1e1e1e;
+    color: #e0e0e0;
+    border-color: #404040;
+  }
+  .dark .titlebar { background: linear-gradient(180deg, #2a2a2a, #1a1a1a); border-color: #000; }
+  .dark .menubar { background: #252525; border-color: #404040; color: #e0e0e0; }
+  .dark .toolbar { background: #2a2a2a; border-color: #404040; }
+  .dark .tool-btn { background: #333; border-color: #555; color: #e0e0e0; }
+  .dark .tool-btn.primary { background: #3a7dc8; border-color: #2a6da8; }
+  .dark .toolbar .search { background: #333; border-color: #555; color: #e0e0e0; }
+  .dark .sidebar { background: #252525; border-color: #404040; }
+  .dark .sidebar-item.active { background: #2a2a2a; color: #6ab0e8; }
+  .dark .content { background: #1e1e1e; color: #e0e0e0; }
+  .dark .content h2 { color: #e0e0e0; }
+  .dark .page-tab { background: #2a2a2a; border-color: #404040; color: #e0e0e0; }
+  .dark .page-tab.active { background: #1e1e1e; color: #6ab0e8; border-color: #6ab0e8; }
+  .dark .page-tab.add { color: #6ab0e8; border-color: #555; }
+  .dark .btn-group { background: #252525; border-color: #404040; }
+  .dark .btn-group .label { color: #888; }
+  .dark .btn-group.danger { background: #2a1a1a; border-color: #5a2828; }
+  .dark .btn { background: #333; border-color: #555; color: #e0e0e0; }
+  .dark .btn.primary { background: #3a7dc8; border-color: #2a6da8; }
+  .dark .field .value, .dark .field input, .dark .field textarea { background: #2a2a2a; border-color: #555; color: #e0e0e0; }
+  .dark .field .value.computed { background: #1a2a3a; color: #6ab0e8; border-color: #3a5a7a; }
+  .dark .chip { background: #1a2a3a; color: #6ab0e8; border-color: #3a5a7a; }
+  .dark .numbering-badge { background: #1a3a1a; color: #6abf6a; }
+  .dark .tbl { background: #1e1e1e; border-color: #404040; }
+  .dark .tbl th { background: #2a2a2a; border-color: #404040; color: #bbb; }
+  .dark .tbl td { border-color: #303030; }
+  .dark .tbl tr.banned { background: #3a1a1a; }
+  .dark .tbl tr.additional { background: #1a2a3a; }
+  .dark .tbl tr:hover { background: #252525; }
+  .dark .checkbox { background: #2a2a2a; border-color: #888; }
+  .dark .checkbox.checked { background: #3a7dc8; border-color: #3a7dc8; }
+  .dark .statusbar { background: #2a2a2a; border-color: #404040; color: #bbb; }
+  .dark .footer-btns { background: #252525; border-color: #404040; }
+  .dark .draft-status { background: #1a3a1a; color: #6abf6a; border-color: #2a5a2a; }
+
+</style>
+</head>
+<body>
+
+<h1>OMTS — Извещение на замену материалов</h1>
+<p class="meta">Визуальный макет предложенного редизайна. Документ с обоснованием: <code>docs/REDESIGN_PROPOSAL.md</code>.</p>
+
+<h2>1. Главное окно — было и стало</h2>
+
+<div class="compare">
+
+  <!-- ===== OLD ===== -->
+  <div class="panel old">
+    <div class="panel-title">Было — 3 вкладки, кнопки в одну строку</div>
+    <div class="window">
+      <div class="titlebar">
+        <span class="title">Извещение на замену материалов</span>
+        <span class="controls"><span class="min"></span><span class="max"></span><span class="close"></span></span>
+      </div>
+      <div class="menubar">
+        <span class="menu">Документ</span>
+        <span class="menu">Данные</span>
+        <span class="menu">Настройки</span>
+      </div>
+      <div style="padding: 12px; border-bottom: 1px solid #e0e4e8;">
+        <span class="tool-btn" style="font-weight:600;color:#2a6da8;">Реквизиты документа</span>
+        <span class="tool-btn">Изменения материалов</span>
+        <span class="tool-btn">Наборы</span>
+      </div>
+      <div style="padding: 16px;">
+        <h3 style="margin: 0 0 10px;">Изменения материалов по деталям</h3>
+        <p class="annotation warn">↓ 9 кнопок в одну строку — нет группировки, нет иконок</p>
+        <div class="old-row">
+          <span class="btn">Поиск детали</span>
+          <span class="btn">Добавить</span>
+          <span class="btn">Создать новую деталь</span>
+          <span class="btn">Копировать и редактировать</span>
+          <span class="btn">Редактировать набор</span>
+          <span class="btn danger">Удалить деталь</span>
+          <span class="btn danger">Удалить строку</span>
+          <span class="btn danger">Удалить деталь из БД</span>
+          <span class="btn emoji">⛔ Запретить замену</span>
+        </div>
+        <p class="annotation warn">Доп. страницы: отдельная кнопка внизу → confirm → переход на вкладку. Breadcrumb не виден.</p>
+        <p class="annotation warn">TKO заключение — поле в модели есть, в UI — нет.</p>
+        <p class="annotation warn">Запрет замены — одна кнопка в углу, без панели управления.</p>
+        <p class="annotation warn">Дублирование: выбор машин и в главном окне, и в диалоге при генерации.</p>
+      </div>
+      <div style="padding: 10px 12px; border-top: 1px solid #e0e4e8; display: flex; gap: 6px;">
+        <span class="btn primary">Сгенерировать документ</span>
+        <span class="btn">Добавить данные для доп. страницы</span>
+        <span class="btn">Очистить</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== NEW ===== -->
+  <div class="panel new">
+    <div class="panel-title">Стало — Wizard, сгруппированные панели, статус-бар</div>
+    <div class="window">
+      <div class="titlebar">
+        <span class="title">Извещение на замену материалов — MM-26-042</span>
+        <span class="controls"><span class="min"></span><span class="max"></span><span class="close"></span></span>
+      </div>
+      <div class="menubar">
+        <span class="menu">Документ</span>
+        <span class="menu">Данные</span>
+        <span class="menu">Справочник</span>
+        <span class="menu">Администрирование</span>
+        <span class="menu">Настройки</span>
+      </div>
+      <div class="toolbar">
+        <span class="tool-btn primary"><span class="icon">＋</span>Новый</span>
+        <span class="tool-btn"><span class="icon">📂</span>Открыть</span>
+        <span class="tool-btn"><span class="icon">💾</span>Сохранить</span>
+        <span class="draft-status">✓ Черновик: сохранён 14:38</span>
+        <span class="spacer"></span>
+        <input class="search" placeholder="🔍 Глобальный поиск (деталь, документ, материал)">
+      </div>
+      <div class="main-area">
+        <div class="sidebar">
+          <div class="sidebar-item done"><span class="dot"></span>1. Шапка документа</div>
+          <div class="sidebar-item active"><span class="dot"></span>2. Материалы</div>
+          <div class="sidebar-item"><span class="dot"></span>3. Наборы</div>
+          <div class="sidebar-item"><span class="dot"></span>4. Предпросмотр</div>
+        </div>
+        <div class="content">
+          <h2>Шаг 2 — Материалы</h2>
+          <div class="page-tabs">
+            <span class="page-tab active">Страница 1</span>
+            <span class="page-tab">2+</span>
+            <span class="page-tab">3+</span>
+            <span class="page-tab add">＋ Добавить страницу</span>
+          </div>
+
+          <div class="btn-groups">
+            <div class="btn-group">
+              <div class="label">Деталь</div>
+              <div class="buttons">
+                <input class="search" style="width: 280px; padding: 5px 10px; border: 1px solid #c0c8d0; border-radius: 4px; font-size: 12px;" placeholder="🔍 Поиск детали по коду или материалу…">
+                <span class="btn"><span class="icon">＋</span>Добавить в документ</span>
+              </div>
+            </div>
+            <div class="btn-group">
+              <div class="label">Действия</div>
+              <div class="buttons">
+                <span class="btn"><span class="icon">📝</span>Создать деталь</span>
+                <span class="btn"><span class="icon">📋</span>Копировать</span>
+                <span class="btn"><span class="icon">✏️</span>Редактировать набор</span>
+              </div>
+            </div>
+            <div class="btn-group danger">
+              <div class="label">Управление (требует подтверждения)</div>
+              <div class="buttons">
+                <span class="btn danger-btn">🗑 Удалить деталь</span>
+                <span class="btn danger-btn">🗑 Удалить строку</span>
+                <span class="btn"><span class="icon">⛔</span>Запреты…</span>
+                <span class="btn danger-btn">⚠ Удалить деталь из БД</span>
+              </div>
+            </div>
+          </div>
+
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th style="width: 24px;"><span class="checkbox"></span></th>
+                <th>Деталь</th>
+                <th>Цех</th>
+                <th>Материал 'до'</th>
+                <th>Ед.</th>
+                <th>Норма</th>
+                <th style="width: 50px;">Меняем</th>
+                <th>Материал 'после'</th>
+                <th>История</th>
+                <th style="width: 60px;">Стр.</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="checkbox-cell"><span class="checkbox checked">✓</span></td>
+                <td>КИР 03.614</td>
+                <td>ПЗУ</td>
+                <td>Грунт ГФ-021 красно-коричневый</td>
+                <td>кг</td>
+                <td>0.1500</td>
+                <td class="checkbox-cell"><span class="checkbox checked">✓</span></td>
+                <td>Грунт ГФ-021 серый</td>
+                <td><span class="badge ok">есть (3)</span></td>
+                <td>1</td>
+              </tr>
+              <tr class="banned">
+                <td class="checkbox-cell"><span class="checkbox checked">✓</span></td>
+                <td>БОЛТ М10</td>
+                <td>ЗМУ</td>
+                <td>Сталь 40Х, кл. пр. 12.9</td>
+                <td>шт</td>
+                <td>1.0000</td>
+                <td class="checkbox-cell"><span class="checkbox checked">✓</span></td>
+                <td>Сталь 30ХМА, кл. пр. 10.9</td>
+                <td><span class="badge ban">⛔ запрет</span></td>
+                <td>1</td>
+              </tr>
+              <tr class="additional">
+                <td class="checkbox-cell"><span class="checkbox"></span></td>
+                <td>ВТУЛКА 25.615</td>
+                <td>СУ</td>
+                <td>Лак НЦ-218, чёрный</td>
+                <td>кг</td>
+                <td>0.0500</td>
+                <td class="checkbox-cell"><span class="checkbox"></span></td>
+                <td></td>
+                <td><span class="badge warn">нет истории</span></td>
+                <td>2+</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="statusbar">
+        <span class="item ok"><span class="dot"></span>БД ОК</span>
+        <span class="item">📦 Деталей: <b>3</b></span>
+        <span class="item">🚜 Машин: <b>2</b></span>
+        <span class="item">🔄 Замен: <b>2</b></span>
+        <span class="item">⛔ Запретов: <b>1</b></span>
+        <span class="item">💾 Черновик: 14:38</span>
+        <span class="item" style="margin-left:auto;">Готово к генерации</span>
+      </div>
+      <div class="footer-btns">
+        <div class="left">
+          <span class="btn"><span class="icon">💾</span>Сохранить черновик</span>
+          <span class="btn"><span class="icon">🧹</span>Очистить</span>
+        </div>
+        <div class="right">
+          <span class="btn">← Назад</span>
+          <span class="btn">Далее →</span>
+          <span class="btn primary"><span class="icon">📄</span>Сгенерировать документ</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>2. Шапка документа (Шаг 1) — был и стал</h2>
+<div class="compare">
+  <div class="panel old">
+    <div class="panel-title">Было — 5 полей, без шаблонов, без TKO</div>
+    <div style="padding: 12px; background: #fff; border: 1px solid #d0d7de; border-radius: 6px;">
+      <div style="margin-bottom: 10px;">
+        <div style="font-size: 11px; color: #666; text-transform: uppercase;">Номер извещения</div>
+        <div style="font-size: 18px; font-weight: 600; color: #2a6da8;">MM-26-042</div>
+      </div>
+      <div style="margin-bottom: 10px;">
+        <div style="font-size: 11px; color: #666;">Дата внедрения замены</div>
+        <div style="border: 1px solid #c0c8d0; padding: 4px 8px; border-radius: 4px; font-size: 13px; background: #fff;">📅 25.06.2026</div>
+      </div>
+      <div style="margin-bottom: 10px;">
+        <div style="font-size: 11px; color: #666;">Срок действия (партия)</div>
+        <div style="border: 1px solid #c0c8d0; padding: 4px 8px; border-radius: 4px; font-size: 13px; background: #fff;">Июнь ▾</div>
+      </div>
+      <div style="margin-bottom: 10px;">
+        <div style="font-size: 11px; color: #666;">Год (для нумерации)</div>
+        <div style="border: 1px solid #c0c8d0; padding: 4px 8px; border-radius: 4px; font-size: 13px; background: #fff;">2026</div>
+      </div>
+      <div>
+        <div style="font-size: 11px; color: #666;">Причина</div>
+        <div style="border: 1px solid #c0c8d0; padding: 4px 8px; border-radius: 4px; font-size: 13px; background: #fff;">&nbsp;</div>
+      </div>
+      <p class="annotation warn">↑ Нет TKO заключения. Нет шаблонов причин. Нет индикации что номер "свободен".</p>
+    </div>
+  </div>
+
+  <div class="panel new">
+    <div class="panel-title">Стало — с шаблонами, TKO, статусом нумерации</div>
+    <div style="padding: 16px; background: #fff; border: 1px solid #d0d7de; border-radius: 6px;">
+      <div class="form-grid">
+        <div class="field">
+          <label>Номер извещения</label>
+          <div class="value computed">MM-26-042
+            <span class="numbering-badge">свободно 245 из 999</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>Дата внедрения замены</label>
+          <div class="value">📅 25.06.2026</div>
+        </div>
+        <div class="field">
+          <label>Срок действия (партия)</label>
+          <div class="value">Июнь 2026 ▾</div>
+        </div>
+        <div class="field">
+          <label>Год (для нумерации)</label>
+          <div class="value">2026</div>
+        </div>
+        <div class="field" style="grid-column: 1 / -1;">
+          <label>Причина</label>
+          <div class="value">&nbsp;</div>
+          <div class="templates">
+            <span class="chip">📋 Отсутствие материала</span>
+            <span class="chip">📋 Переход на аналог</span>
+            <span class="chip">📋 Решение ТКО</span>
+            <span class="chip">📋 Прочее...</span>
+          </div>
+        </div>
+        <div class="field" style="grid-column: 1 / -1;">
+          <label>Заключение ТКО</label>
+          <textarea class="value" rows="2" placeholder="Введите заключение техническо-контрольного отдела…"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>3. Настройки — было и стало</h2>
+<div class="compare">
+  <div class="panel old">
+    <div class="panel-title">Было — свалка из 5 полей</div>
+    <div style="padding: 12px; background: #fff; border: 1px solid #d0d7de; border-radius: 6px;">
+      <div style="font-size: 13px; margin-bottom: 8px;"><b>Папка для сохранения извещений:</b></div>
+      <div style="border: 1px solid #c0c8d0; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-bottom: 12px;">D:\Извещения\2026</div>
+      <div style="font-size: 13px; margin-bottom: 4px;"><b>Начальный номер для нумерации извещений:</b></div>
+      <div style="font-size: 10px; color: gray; margin-bottom: 8px;">Номер, с которого будет начинаться нумерация при создании новой записи для года</div>
+      <div style="border: 1px solid #c0c8d0; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-bottom: 12px;">1</div>
+      <div style="font-size: 13px; margin-bottom: 4px;"><b>Год по умолчанию для нумерации:</b></div>
+      <div style="border: 1px solid #c0c8d0; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-bottom: 12px;">2026</div>
+      <div style="font-size: 13px; margin-bottom: 4px;"><b>Следующий номер извещения (текущий):</b></div>
+      <div style="font-size: 10px; color: gray;">Месяц + спиннер</div>
+      <div style="font-size: 12px;">☐ Автоматически открывать файл после генерации</div>
+    </div>
+  </div>
+  <div class="panel new">
+    <div class="panel-title">Стало — 4 таба</div>
+    <div style="background: #fff; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden;">
+      <div style="background: #f0f4f8; border-bottom: 1px solid #d0d7de; padding: 0 12px; display: flex; gap: 4px;">
+        <span style="padding: 8px 14px; background: #fff; border-radius: 4px 4px 0 0; font-size: 12px; border: 1px solid #d0d7de; border-bottom: none; font-weight: 600; color: #2a6da8;">📁 Общие</span>
+        <span style="padding: 8px 14px; font-size: 12px; color: #666;">🔢 Нумерация</span>
+        <span style="padding: 8px 14px; font-size: 12px; color: #666;">💾 Хранилище</span>
+        <span style="padding: 8px 14px; font-size: 12px; color: #666;">🎨 Внешний вид</span>
+      </div>
+      <div style="padding: 16px;">
+        <div class="field" style="margin-bottom: 10px;">
+          <label>Папка для сохранения извещений</label>
+          <div style="display:flex; gap:6px;">
+            <div class="value" style="flex:1;">D:\Извещения\2026</div>
+            <span class="btn">Обзор…</span>
+          </div>
+        </div>
+        <div style="margin-bottom: 10px;">
+          <span style="font-size: 12px;">☐ Автоматически открывать файл после генерации</span>
+        </div>
+        <div class="field">
+          <label>Шаблоны причин замены</label>
+          <div class="value" style="padding: 6px 10px; font-size: 12px;">Отсутствие материала; Переход на аналог; Решение ТКО; Прочее</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>4. Панель запретов (новый экран)</h2>
+<div class="panel new">
+  <div class="panel-title">Новый — отдельная панель для управления запретами</div>
+  <div style="background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 16px;">
+    <div style="display:flex; gap:8px; margin-bottom: 12px;">
+      <input class="search" style="flex:1; padding: 5px 10px; border: 1px solid #c0c8d0; border-radius: 4px; font-size: 12px;" placeholder="🔍 Поиск по материалу или детали…">
+      <select style="padding: 5px 10px; border: 1px solid #c0c8d0; border-radius: 4px; font-size: 12px;">
+        <option>Все цеха</option><option>ПЗУ</option><option>ЗМУ</option><option>СУ</option><option>ОСУ</option>
+      </select>
+      <span class="btn primary">＋ Добавить запрет</span>
+    </div>
+    <table class="tbl">
+      <thead>
+        <tr><th>Деталь</th><th>Цех</th><th>Материал 'до'</th><th>Запрещённая замена</th><th>Причина</th><th>Поставил</th><th>Дата</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr><td>БОЛТ М10</td><td>ЗМУ</td><td>Сталь 40Х</td><td>→ Сталь 30ХМА</td><td>Нет сертификата</td><td>Конструктор Иванов</td><td>15.05.2026</td><td><span class="btn">Снять</span></td></tr>
+        <tr><td>ВТУЛКА 25.615</td><td>СУ</td><td>Лак НЦ-218 чёрный</td><td>→ Лак НЦ-218 белый</td><td>Изменение цвета недопустимо</td><td>Конструктор Петров</td><td>03.04.2026</td><td><span class="btn">Снять</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>5. Тёмная тема (как опция)</h2>
+<div class="panel new">
+  <div class="panel-title">То же главное окно в тёмной теме — единый стиль, светлый/тёмный/system</div>
+  <div class="window dark">
+    <div class="titlebar">
+      <span class="title">Извещение на замену материалов — MM-26-042</span>
+      <span class="controls"><span class="min"></span><span class="max"></span><span class="close"></span></span>
+    </div>
+    <div class="menubar">
+      <span class="menu">Документ</span><span class="menu">Данные</span><span class="menu">Справочник</span><span class="menu">Администрирование</span><span class="menu">Настройки</span>
+    </div>
+    <div class="toolbar">
+      <span class="tool-btn primary"><span class="icon">＋</span>Новый</span>
+      <span class="tool-btn"><span class="icon">📂</span>Открыть</span>
+      <span class="draft-status">✓ Черновик: сохранён 14:38</span>
+      <span class="spacer"></span>
+      <input class="search" placeholder="🔍 Глобальный поиск">
+    </div>
+    <div class="main-area">
+      <div class="sidebar">
+        <div class="sidebar-item done"><span class="dot"></span>1. Шапка</div>
+        <div class="sidebar-item active"><span class="dot"></span>2. Материалы</div>
+        <div class="sidebar-item"><span class="dot"></span>3. Наборы</div>
+        <div class="sidebar-item"><span class="dot"></span>4. Предпросмотр</div>
+      </div>
+      <div class="content">
+        <h2>Шаг 2 — Материалы</h2>
+        <div class="page-tabs">
+          <span class="page-tab active">Страница 1</span>
+          <span class="page-tab">2+</span>
+          <span class="page-tab">3+</span>
+          <span class="page-tab add">＋</span>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Деталь</th><th>Цех</th><th>Материал 'до'</th><th>После</th><th>Стр.</th></tr></thead>
+          <tbody>
+            <tr><td>КИР 03.614</td><td>ПЗУ</td><td>Грунт ГФ-021 красно-коричневый</td><td>Грунт ГФ-021 серый</td><td>1</td></tr>
+            <tr class="banned"><td>БОЛТ М10</td><td>ЗМУ</td><td>Сталь 40Х</td><td>Сталь 30ХМА <span class="badge ban">⛔</span></td><td>1</td></tr>
+            <tr class="additional"><td>ВТУЛКА 25.615</td><td>СУ</td><td>Лак НЦ-218 чёрный</td><td>—</td><td>2+</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="statusbar">
+      <span class="item ok"><span class="dot"></span>БД ОК</span>
+      <span class="item">📦 Деталей: <b>3</b></span>
+      <span class="item">🚜 Машин: <b>2</b></span>
+      <span class="item">⛔ Запретов: <b>1</b></span>
+      <span class="item" style="margin-left:auto;">Готово к генерации</span>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <h2 style="margin-top: 0;">Что изменилось — сводка</h2>
+  <ul>
+    <li><b>Wizard из 4 шагов</b> вместо 3 вкладок. Прогресс виден слева (зелёная точка = готово).</li>
+    <li><b>Сгруппированные панели кнопок</b> вместо 9 кнопок в строку. Опасные действия — отдельно, с красной рамкой.</li>
+    <li><b>Иконки</b> в кнопках и меню — быстрее находишь глазами.</li>
+    <li><b>Breadcrumb доп. страниц</b> в виде табов: <code>1 | 2+ | 3+ | +Добавить</code>. Активная подсвечена, остальные кликабельны.</li>
+    <li><b>Статус-бар</b>: счётчики деталей/машин/замен/запретов + статус БД + время черновика.</li>
+    <li><b>Черновик автосохранения</b> — раз в 30 сек, бейдж в тулбаре.</li>
+    <li><b>Глобальный поиск</b> в тулбаре — ищет по деталям, документам, материалам.</li>
+    <li><b>TKO заключение</b> в шапке + шаблоны причин.</li>
+    <li><b>Бейдж "История"</b> в таблице материалов — сразу видно где есть предложения замены.</li>
+    <li><b>Настройки в табах</b> (Общие / Нумерация / Хранилище / Внешний вид).</li>
+    <li><b>Панель запретов</b> — отдельный экран со списком, фильтрами, причиной.</li>
+    <li><b>Темы</b> — светлая/тёмная/system.</li>
+  </ul>
+
+  <h2>Жду от тебя</h2>
+  <p>Полный документ с обоснованием — <code>docs/REDESIGN_PROPOSAL.md</code>.</p>
+  <p>Скажи, какие из фаз брать в работу:</p>
+  <ul>
+    <li><b>Фаза 1 (quick wins)</b> — статус-бар, горячие клавиши, TKO, шаблоны причин, bulk-операции, удаление дубля MachineSelectionDialog, единый QSS, inline-уведомления. 1-2 дня, минимальный риск.</li>
+    <li><b>Фаза 2 (структура)</b> — wizard, группировка кнопок, breadcrumb доп. страниц, панель запретов, предпросмотр. 3-5 дней.</li>
+    <li><b>Фаза 3 (новое)</b> — автосохранение, журнал, темы, импорт/экспорт черновика. 5-10 дней.</li>
+    <li><b>Фаза 4 (глубокий рефакторинг)</b> — PageSection, NumberingContext, WizardPage базовый класс. По необходимости.</li>
+  </ul>
+</div>
+
+</body>
+</html>

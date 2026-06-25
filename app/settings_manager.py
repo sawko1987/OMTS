@@ -13,18 +13,28 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 
 class SettingsManager:
     """Менеджер настроек приложения"""
-    
+
+    # Дефолтные шаблоны причин замены (если пользователь не настроил свои)
+    DEFAULT_REASON_TEMPLATES = [
+        "Отсутствие материала на складе",
+        "Переход на аналог по решению конструктора",
+        "Решение ТКО",
+        "Корректировка технологического процесса",
+        "Оптимизация себестоимости",
+    ]
+
     def __init__(self):
         self.settings_file = SETTINGS_FILE
         self._settings = self._load_settings()
-    
+
     def _load_settings(self) -> dict:
         """Загрузить настройки из файла"""
         default_settings = {
             "output_directory": None,  # Путь к папке сохранения документов
             "starting_number": 1,  # Начальный номер для нумерации извещений
             "open_after_generate": True,  # Автоматически открывать файл после генерации
-            "default_year": date.today().year  # Год по умолчанию для нумерации
+            "default_year": date.today().year,  # Год по умолчанию для нумерации
+            "reason_templates": list(self.DEFAULT_REASON_TEMPLATES),
         }
         
         if not self.settings_file.exists():
@@ -96,11 +106,35 @@ class SettingsManager:
     def get_default_year(self) -> int:
         """Получить год по умолчанию для нумерации"""
         return self._settings.get("default_year", date.today().year)
-    
+
     def set_default_year(self, year: int):
         """Установить год по умолчанию для нумерации"""
         if not isinstance(year, int) or year < 2000 or year > 2100:
             raise ValueError("Некорректный год")
         self._settings["default_year"] = year
+        self._save_settings()
+
+    def get_reason_templates(self) -> list[str]:
+        """Получить список шаблонов причин замены."""
+        templates = self._settings.get("reason_templates")
+        if not templates:
+            return list(self.DEFAULT_REASON_TEMPLATES)
+        return list(templates)
+
+    def set_reason_templates(self, templates: list[str]) -> None:
+        """Установить список шаблонов причин замены.
+
+        Пустые строки и дубликаты отбрасываются. Если после очистки список
+        пуст — сохраняются дефолтные шаблоны.
+        """
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in templates:
+            value = (raw or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            cleaned.append(value)
+        self._settings["reason_templates"] = cleaned or list(self.DEFAULT_REASON_TEMPLATES)
         self._save_settings()
 

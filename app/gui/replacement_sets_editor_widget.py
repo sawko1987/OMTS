@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Optional
 import logging
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QKeyEvent, QColor  # [BAN_FEATURE]
 from PySide6.QtWidgets import (
     QWidget,
@@ -53,6 +53,9 @@ class ReplacementSetsEditorWidget(QWidget):
     На первом этапе — каркас UI + выбор детали. Логику операций (copy/delete/split/save)
     добавим дальше по плану.
     """
+
+    # Сигнал: данные документа изменились (для обновления статус-бара и т.п.)
+    document_data_changed = Signal()
 
     def __init__(
         self,
@@ -964,6 +967,7 @@ class ReplacementSetsEditorWidget(QWidget):
                     part_changes.materials.append(material_change)
 
             self.document_data.part_changes.append(part_changes)
+            self.document_data_changed.emit()
         else:
             # Нет наборов - используем старую логику
             entries = self.catalog_loader.get_entries_by_part(part)
@@ -986,6 +990,7 @@ class ReplacementSetsEditorWidget(QWidget):
                 part_changes.materials.append(material_change)
 
             self.document_data.part_changes.append(part_changes)
+            self.document_data_changed.emit()
 
         # Автоматически привязываем деталь к изделию, если изделие выбрано
         self._link_part_to_product(part)
@@ -993,6 +998,7 @@ class ReplacementSetsEditorWidget(QWidget):
         # Обновляем таблицу во второй вкладке
         if self.changes_widget:
             self.changes_widget.refresh()
+            self.changes_widget.document_data_changed.emit()
 
         QMessageBox.information(
             self, "Успех", f"Набор сохранён и деталь '{part}' добавлена в документ"
@@ -1265,6 +1271,7 @@ class ReplacementSetsEditorWidget(QWidget):
                     part_changes.materials.append(material_change)
 
             self.document_data.part_changes.append(part_changes)
+            self.document_data_changed.emit()
         else:
             # Нет наборов - используем старую логику
             entries = self.catalog_loader.get_entries_by_part(part)
@@ -1293,6 +1300,7 @@ class ReplacementSetsEditorWidget(QWidget):
                 part_changes.materials.append(material_change)
 
             self.document_data.part_changes.append(part_changes)
+            self.document_data_changed.emit()
 
         # Автоматически привязываем деталь к изделию, если изделие выбрано
         self._link_part_to_product(part)

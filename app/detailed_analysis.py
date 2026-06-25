@@ -29,7 +29,6 @@ def detailed_analysis():
         "validity_period": None,
         "product": None,
         "reason": None,
-        "tko_conclusion": None,
         "vruhcheno_marks": {},
         "table_start": None,
         "table_headers": {},
@@ -90,12 +89,6 @@ def detailed_analysis():
                         reason_cell = main_sheet.cell(row, col + 1)
                         findings["reason"] = (row, col + 1, reason_cell.coordinate)
                         print(f"    -> Причина: {reason_cell.coordinate}")
-                    
-                    # Заключение ТКО
-                    if "заключение тко" in val.lower():
-                        tko_cell = main_sheet.cell(row, col + 1)
-                        findings["tko_conclusion"] = (row, col + 1, tko_cell.coordinate)
-                        print(f"    -> Заключение ТКО: {tko_cell.coordinate}")
     
     # Анализ блока "Вручено"
     print("\nБЛОК 'ВРУЧЕНО':")

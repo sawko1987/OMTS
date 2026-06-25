@@ -18,6 +18,7 @@ from app.product_store import ProductStore
 from app.banned_replacements_store import BannedReplacementsStore  # [BAN_FEATURE]
 from app.gui.part_creation_dialog import PartCreationDialog
 from app.gui.set_selection_dialog import ReplacementSetSelectionDialog
+from app.gui.toast import show_toast, ToastLevel
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -28,6 +29,8 @@ class ChangesTableWidget(QWidget):
 
     # Сигнал: выбранная/активная деталь (для синхронизации с другими вкладками)
     part_selected = Signal(str)
+    # Сигнал: данные документа изменились (для обновления статус-бара и т.п.)
+    document_data_changed = Signal()
     
     def __init__(self, document_data: DocumentData, 
                  catalog_loader: CatalogLoader = None,
@@ -69,11 +72,22 @@ class ChangesTableWidget(QWidget):
         self.machines_list.itemChanged.connect(self.on_machines_selection_changed)
         layout.addWidget(self.machines_list)
         
-        # Кнопка создания новой машины
+        # Кнопка создания новой машины + быстрый выбор
         machine_buttons_layout = QHBoxLayout()
         self.btn_create_machine = QPushButton("Создать новую машину")
         self.btn_create_machine.clicked.connect(self.create_machine)
         machine_buttons_layout.addWidget(self.btn_create_machine)
+
+        self.btn_select_all_machines = QPushButton("Выбрать все")
+        self.btn_select_all_machines.setToolTip("Отметить все машины как выбранные")
+        self.btn_select_all_machines.clicked.connect(self._select_all_machines)
+        machine_buttons_layout.addWidget(self.btn_select_all_machines)
+
+        self.btn_clear_machines = QPushButton("Снять выбор")
+        self.btn_clear_machines.setToolTip("Снять отметку со всех машин")
+        self.btn_clear_machines.clicked.connect(self._deselect_all_machines)
+        machine_buttons_layout.addWidget(self.btn_clear_machines)
+
         machine_buttons_layout.addStretch()
         layout.addLayout(machine_buttons_layout)
         
@@ -190,9 +204,12 @@ class ChangesTableWidget(QWidget):
         header.setSectionResizeMode(8, QHeaderView.ResizeToContents)
         
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.itemChanged.connect(self.on_item_changed)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
-        
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_table_context_menu)
+
         layout.addWidget(self.table)
         
         # Загружаем список деталей при инициализации
@@ -229,11 +246,12 @@ class ChangesTableWidget(QWidget):
                 product_name = list_item.data(Qt.UserRole)
                 if product_name:
                     selected_products.append(product_name)
-        
+
         self.document_data.products = selected_products
         self.update_product_info_label()
         # Обновляем фильтр деталей
         self.load_parts_list()
+        self.document_data_changed.emit()
 
     def set_selected_products(self, products: List[str]) -> None:
         """Программно установить выбранные машины и синхронизировать UI."""
@@ -258,6 +276,7 @@ class ChangesTableWidget(QWidget):
 
         self.update_product_info_label()
         self.load_parts_list()
+        self.document_data_changed.emit()
     
     def create_machine(self):
         """Создать новую машину (изделие)"""
@@ -277,10 +296,7 @@ class ChangesTableWidget(QWidget):
         # Проверяем, не существует ли уже такая машина
         existing_id = self.product_store.get_product_by_name(product_name)
         if existing_id:
-            QMessageBox.information(
-                self, "Информация", 
-                f"Машина '{product_name}' уже существует"
-            )
+            show_toast(self.window(), f"Машина «{product_name}» уже существует — выбрана", ToastLevel.INFO)
             # Устанавливаем её как выбранную
             for i in range(self.machines_list.count()):
                 item = self.machines_list.item(i)
@@ -288,7 +304,7 @@ class ChangesTableWidget(QWidget):
                     item.setCheckState(Qt.Checked)
                     break
             return
-        
+
         # Создаём новую машину
         product_id = self.product_store.add_product(product_name)
         if product_id:
@@ -300,10 +316,7 @@ class ChangesTableWidget(QWidget):
                 if item and item.data(Qt.UserRole) == product_name:
                     item.setCheckState(Qt.Checked)
                     break
-            QMessageBox.information(
-                self, "Успех", 
-                f"Машина '{product_name}' успешно создана"
-            )
+            show_toast(self.window(), f"Машина «{product_name}» создана", ToastLevel.SUCCESS)
         else:
             QMessageBox.warning(self, "Ошибка", "Не удалось создать машину")
     
@@ -517,6 +530,118 @@ class ChangesTableWidget(QWidget):
             self.load_parts_list()
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить справочник:\n{e}")
+
+    def _select_all_machines(self):
+        """Отметить все машины как выбранные."""
+        if self.machines_list.count() == 0:
+            return
+        self.machines_list.blockSignals(True)
+        for i in range(self.machines_list.count()):
+            item = self.machines_list.item(i)
+            if item:
+                item.setCheckState(Qt.Checked)
+        self.machines_list.blockSignals(False)
+        # Применяем финальное состояние одним проходом
+        self.on_machines_selection_changed(self.machines_list.item(0))
+
+    def _deselect_all_machines(self):
+        """Снять отметку со всех машин."""
+        if self.machines_list.count() == 0:
+            return
+        self.machines_list.blockSignals(True)
+        for i in range(self.machines_list.count()):
+            item = self.machines_list.item(i)
+            if item:
+                item.setCheckState(Qt.Unchecked)
+        self.machines_list.blockSignals(False)
+        self.on_machines_selection_changed(self.machines_list.item(0))
+
+    def _show_table_context_menu(self, position):
+        """Контекстное меню таблицы — групповые операции над выбранными строками."""
+        selected_rows = sorted({idx.row() for idx in self.table.selectionModel().selectedRows()})
+        if not selected_rows:
+            return
+
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self.table)
+
+        act_mark = menu.addAction(f"✓ Отметить «Меняем» ({len(selected_rows)})")
+        act_unmark = menu.addAction(f"✗ Снять «Меняем» ({len(selected_rows)})")
+        menu.addSeparator()
+        act_clear_after = menu.addAction(f"🧹 Очистить колонку «после» ({len(selected_rows)})")
+        menu.addSeparator()
+        act_remove = menu.addAction(f"🗑 Удалить строки ({len(selected_rows)})")
+
+        chosen = menu.exec(self.table.viewport().mapToGlobal(position))
+        if chosen is act_mark:
+            self._bulk_set_changed(selected_rows, True)
+        elif chosen is act_unmark:
+            self._bulk_set_changed(selected_rows, False)
+        elif chosen is act_clear_after:
+            self._bulk_clear_after_name(selected_rows)
+        elif chosen is act_remove:
+            self._bulk_remove_rows(selected_rows)
+
+    def _rows_to_material_pairs(self, rows):
+        """Преобразовать список индексов строк таблицы в пары (part_change, material)."""
+        pairs = []
+        for row in rows:
+            part_item = self.table.item(row, 0)
+            if not part_item:
+                continue
+            data = part_item.data(Qt.UserRole)
+            if isinstance(data, list):
+                data = tuple(data)
+            if not data or not isinstance(data, tuple) or len(data) != 2:
+                continue
+            pairs.append(data)
+        return pairs
+
+    def _bulk_set_changed(self, rows, value: bool):
+        """Массово установить/снять флаг «Меняем» для выбранных строк."""
+        pairs = self._rows_to_material_pairs(rows)
+        for _part_change, material in pairs:
+            material.is_changed = value
+        self.refresh()
+        self.document_data_changed.emit()
+
+    def _bulk_clear_after_name(self, rows):
+        """Очистить колонку «Материал после» у выбранных строк."""
+        pairs = self._rows_to_material_pairs(rows)
+        for _part_change, material in pairs:
+            material.after_name = None
+            material.after_unit = None
+            material.after_norm = None
+        self.refresh()
+        self.document_data_changed.emit()
+
+    def _bulk_remove_rows(self, rows):
+        """Удалить выбранные строки (и пустые детали, если материалов не осталось)."""
+        pairs = self._rows_to_material_pairs(rows)
+        if not pairs:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение",
+            f"Удалить {len(pairs)} выбранных строк(и)?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        removed_part_changes = set()
+        for part_change, material in pairs:
+            if material in part_change.materials:
+                part_change.materials.remove(material)
+            if not part_change.materials:
+                removed_part_changes.add(id(part_change))
+        if removed_part_changes:
+            self.document_data.part_changes = [
+                pc for pc in self.document_data.part_changes
+                if id(pc) not in removed_part_changes
+            ]
+        self.refresh()
+        self.document_data_changed.emit()
     
     def create_part(self):
         """Создать новую деталь"""
@@ -634,10 +759,10 @@ class ChangesTableWidget(QWidget):
         for part_change in self.document_data.part_changes:
             if part_change.part == part:
                 materials_count = len(part_change.materials)
-                QMessageBox.information(
-                    self, 
-                    "Информация", 
-                    f"Деталь '{part}' уже добавлена ({materials_count} материалов)"
+                show_toast(
+                    self.window(),
+                    f"Деталь «{part}» уже добавлена ({materials_count} материалов)",
+                    ToastLevel.INFO,
                 )
                 return
         
@@ -859,8 +984,9 @@ class ChangesTableWidget(QWidget):
         
         # Автоматически привязываем деталь к изделию, если изделие выбрано
         self._link_part_to_product(part)
-        
+
         self.refresh()
+        self.document_data_changed.emit()
     
     def _link_part_to_product(self, part: str):
         """Привязать деталь к выбранным изделиям"""
@@ -900,8 +1026,9 @@ class ChangesTableWidget(QWidget):
             pc for pc in self.document_data.part_changes
             if pc.part != part
         ]
-        
+
         self.refresh()
+        self.document_data_changed.emit()
     
     def remove_selected_row(self):
         """Удалить выбранную строку материала"""
@@ -947,8 +1074,9 @@ class ChangesTableWidget(QWidget):
         if not part_change.materials:
             if part_change in self.document_data.part_changes:
                 self.document_data.part_changes.remove(part_change)
-        
+
         self.refresh()
+        self.document_data_changed.emit()
     
     def refresh(self):
         """Обновить таблицу"""
@@ -1074,9 +1202,9 @@ class ChangesTableWidget(QWidget):
         part_item = self.table.item(row, 0)
         if not part_item:
             return
-        
+
         part = part_item.text()
-        
+
         # Находим соответствующий material
         for part_change in self.document_data.part_changes:
             if part_change.part == part:
@@ -1089,6 +1217,7 @@ class ChangesTableWidget(QWidget):
                             material.is_changed = checked
                             break
                 break
+        self.document_data_changed.emit()
     
     def on_item_changed(self, item: QTableWidgetItem):
         """Обработка изменения ячейки"""
@@ -1570,10 +1699,11 @@ class ChangesTableWidget(QWidget):
             
             # Обновляем таблицу
             self.refresh()
-            
+            self.document_data_changed.emit()
+
             QMessageBox.information(
-                self, 
-                "Успех", 
+                self,
+                "Успех",
                 f"Деталь '{part}' успешно удалена из базы данных"
             )
         else:

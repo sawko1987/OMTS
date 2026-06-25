@@ -1,0 +1,224 @@
+/* =====================================================================
+   OMTS — единый стиль приложения (Qt Style Sheet).
+   Применяется ко всему QApplication через QApplication.setStyleSheet().
+   Цвета вдохновлены шаблоном извещения и MS Office.
+   ===================================================================== */
+
+/* Базовый шрифт — чуть крупнее дефолта для читаемости длинных наименований */
+* {
+    font-family: "Segoe UI", "Inter", system-ui, sans-serif;
+}
+
+/* Кнопки — единый вид, основная кнопка — primary */
+QPushButton {
+    padding: 6px 14px;
+    border: 1px solid #b8c0c8;
+    border-radius: 4px;
+    background-color: #ffffff;
+    color: #1f2329;
+}
+QPushButton:hover {
+    background-color: #f0f4f8;
+    border-color: #98a8b8;
+}
+QPushButton:pressed {
+    background-color: #e0e8f0;
+}
+QPushButton:disabled {
+    color: #98a8b8;
+    background-color: #f4f5f7;
+}
+
+QPushButton[primary="true"] {
+    background-color: #2a6da8;
+    color: #ffffff;
+    border-color: #1f568a;
+    font-weight: 600;
+}
+QPushButton[primary="true"]:hover {
+    background-color: #3480c2;
+    border-color: #2a6da8;
+}
+QPushButton[primary="true"]:pressed {
+    background-color: #1f568a;
+}
+
+QPushButton[danger="true"] {
+    color: #a02020;
+    border-color: #f0a0a0;
+}
+QPushButton[danger="true"]:hover {
+    background-color: #fde0e0;
+}
+
+/* Поля ввода */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QPlainTextEdit {
+    padding: 4px 8px;
+    border: 1px solid #c0c8d0;
+    border-radius: 4px;
+    background-color: #ffffff;
+    selection-background-color: #b8d0e8;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
+QDateEdit:focus, QPlainTextEdit:focus {
+    border-color: #2a6da8;
+}
+QLineEdit:read-only {
+    background-color: #f4f5f7;
+    color: #555;
+}
+
+/* Группы */
+QGroupBox {
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    margin-top: 12px;
+    padding-top: 8px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 6px;
+    color: #2a6da8;
+}
+
+/* Таблицы — выделение строк заметнее */
+QTableWidget {
+    gridline-color: #e0e4e8;
+    selection-background-color: #d8e8f5;
+    selection-color: #1f2329;
+    alternate-background-color: #f8fafc;
+}
+QHeaderView::section {
+    background-color: #f0f4f8;
+    padding: 6px 8px;
+    border: none;
+    border-right: 1px solid #d0d7de;
+    border-bottom: 1px solid #d0d7de;
+    font-weight: 600;
+    color: #555;
+}
+QTableWidget::item {
+    padding: 4px 6px;
+}
+
+/* Вкладки — выделение активной */
+QTabWidget::pane {
+    border: 1px solid #d0d7de;
+    border-radius: 0 0 4px 4px;
+    background-color: #ffffff;
+}
+QTabBar::tab {
+    padding: 8px 16px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    background-color: #f0f4f8;
+    color: #555;
+}
+QTabBar::tab:selected {
+    background-color: #ffffff;
+    border-color: #d0d7de;
+    color: #2a6da8;
+    font-weight: 600;
+}
+QTabBar::tab:hover:!selected {
+    background-color: #e8eef4;
+}
+
+/* Меню */
+QMenuBar {
+    background-color: #f5f7fa;
+    border-bottom: 1px solid #d0d7de;
+}
+QMenuBar::item {
+    padding: 6px 12px;
+}
+QMenuBar::item:selected {
+    background-color: #e0e8f0;
+    border-radius: 3px;
+}
+QMenu {
+    background-color: #ffffff;
+    border: 1px solid #d0d7de;
+}
+QMenu::item {
+    padding: 6px 24px 6px 16px;
+}
+QMenu::item:selected {
+    background-color: #2a6da8;
+    color: #ffffff;
+}
+
+/* Списки */
+QListWidget {
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    background-color: #ffffff;
+}
+QListWidget::item {
+    padding: 4px 6px;
+}
+QListWidget::item:selected {
+    background-color: #d8e8f5;
+    color: #1f2329;
+}
+
+/* Статус-бар */
+QStatusBar {
+    background-color: #f0f4f8;
+    border-top: 1px solid #d0d7de;
+    color: #444;
+}
+QStatusBar QLabel {
+    color: #444;
+    font-size: 11px;
+}
+
+/* Scrollbar — компактнее */
+QScrollBar:vertical {
+    background: transparent;
+    width: 12px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #c0c8d0;
+    border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #98a8b8;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 12px;
+    margin: 0;
+}
+QScrollBar::handle:horizontal {
+    background: #c0c8d0;
+    border-radius: 4px;
+    min-width: 24px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #98a8b8;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+
+/* Диалоги */
+QDialog {
+    background-color: #ffffff;
+}
+
+/* Лейблы — серая подпись под полями формы */
+QLabel[role="hint"] {
+    color: #666;
+    font-size: 10px;
+}

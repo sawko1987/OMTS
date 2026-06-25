@@ -46,8 +46,7 @@ class DocumentData:
     validity_period: Optional[str] = None  # Срок действия (партия)
     products: List[str] = field(default_factory=list)  # Изделия (машины)
     reason: str = ""  # Причина
-    tko_conclusion: str = ""  # Заключение ТКО
-    
+
     # Изменения по деталям
     part_changes: List[PartChanges] = field(default_factory=list)
     

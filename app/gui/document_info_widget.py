@@ -3,8 +3,8 @@
 """
 import logging
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout,
-    QLineEdit, QDateEdit, QLabel, QComboBox, QSpinBox
+    QWidget, QVBoxLayout, QFormLayout, QHBoxLayout,
+    QLineEdit, QDateEdit, QLabel, QComboBox, QSpinBox, QPushButton, QMenu
 )
 from PySide6.QtCore import QDate
 from datetime import date
@@ -73,11 +73,25 @@ class DocumentInfoWidget(QWidget):
         self.year_spin.valueChanged.connect(self._on_year_changed)
         form_layout.addRow("Год (для нумерации):", self.year_spin)
         
-        # Причина
+        # Причина — поле + кнопка выбора шаблона
+        reason_widget = QWidget()
+        reason_layout = QHBoxLayout(reason_widget)
+        reason_layout.setContentsMargins(0, 0, 0, 0)
+        reason_layout.setSpacing(6)
+
         self.reason_edit = QLineEdit()
-        self.reason_edit.setPlaceholderText("Укажите причину замены материалов")
-        form_layout.addRow("Причина:", self.reason_edit)
-        
+        self.reason_edit.setPlaceholderText("Укажите причину замены материалов или выберите шаблон")
+        reason_layout.addWidget(self.reason_edit, 1)
+
+        self.reason_templates_btn = QPushButton("📋 Шаблон")
+        self.reason_templates_btn.setToolTip(
+            "Подставить типовую причину замены. Шаблоны редактируются в Настройки → Общие."
+        )
+        self.reason_templates_btn.clicked.connect(self._show_reason_templates_menu)
+        reason_layout.addWidget(self.reason_templates_btn)
+
+        form_layout.addRow("Причина:", reason_widget)
+
         layout.addLayout(form_layout)
         layout.addStretch()
     
@@ -231,13 +245,13 @@ class DocumentInfoWidget(QWidget):
         """Обработчик изменения года"""
         if self._updating:
             return
-        
+
         self.document_data.document_year = year
         logger.info(f"[_on_year_changed] Выбран год: {year}")
-        
+
         # Сохраняем выбранный год в настройки
         self.settings_manager.set_default_year(year)
-        
+
         # Если год изменился — перезапрашиваем номер для нового года
         if (self.document_data.document_number is not None
                 and self._number_year is not None
@@ -245,6 +259,42 @@ class DocumentInfoWidget(QWidget):
             self._update_number_display()
         else:
             self.refresh_number()
+
+    def _show_reason_templates_menu(self):
+        """Показать меню с шаблонами причин замены."""
+        templates = self.settings_manager.get_reason_templates()
+        menu = QMenu(self.reason_templates_btn)
+
+        if not templates:
+            action = menu.addAction("(нет шаблонов — настройте в Настройки → Общие)")
+            action.setEnabled(False)
+        else:
+            for template in templates:
+                action = menu.addAction(template)
+                # Замыкание на текущее значение template через default-аргумент
+                action.triggered.connect(
+                    lambda checked=False, text=template: self._apply_reason_template(text)
+                )
+
+        # Кнопка-меню показывается чуть ниже кнопки
+        menu.exec(self.reason_templates_btn.mapToGlobal(
+            self.reason_templates_btn.rect().bottomLeft()
+        ))
+
+    def _apply_reason_template(self, text: str) -> None:
+        """Подставить выбранный шаблон в поле причины.
+
+        Если в поле уже что-то введено и текст отличается от шаблона,
+        шаблон дописывается через "; " для сохранения пользовательского текста.
+        """
+        current = self.reason_edit.text().strip()
+        if not current:
+            self.reason_edit.setText(text)
+        elif text.lower() in current.lower():
+            return  # уже есть такой шаблон — ничего не делаем
+        else:
+            self.reason_edit.setText(f"{current}; {text}")
+        self.document_data.reason = self.reason_edit.text().strip()
     
     def update_document_data(self):
         """Обновить данные документа из полей"""

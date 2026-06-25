@@ -22,7 +22,6 @@ class DocumentSerializer:
             "validity_period": document_data.validity_period,
             "products": document_data.products,  # Список продуктов
             "reason": document_data.reason,
-            "tko_conclusion": document_data.tko_conclusion,
             "part_changes": []
         }
         
@@ -79,7 +78,6 @@ class DocumentSerializer:
             validity_period=data.get("validity_period"),
             products=products,
             reason=data.get("reason", ""),
-            tko_conclusion=data.get("tko_conclusion", "")
         )
         
         # Загружаем каталог, если передан загрузчик

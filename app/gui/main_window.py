@@ -3,9 +3,10 @@
 """
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QPushButton, QLabel, QMessageBox, QFileDialog, QMenuBar, QMenu
+    QPushButton, QLabel, QMessageBox, QFileDialog, QMenuBar, QMenu,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from pathlib import Path
 from datetime import date
 import re
@@ -19,6 +20,7 @@ from app.gui.replacement_sets_editor_widget import ReplacementSetsEditorWidget
 from app.gui.settings_dialog import SettingsDialog
 from app.gui.product_parts_binding_dialog import ProductPartsBindingDialog
 from app.gui.database_restore_dialog import DatabaseRestoreDialog
+from app.gui.status_bar import StatusBarWidget
 from app.config import PROJECT_ROOT, DATABASE_PATH, MONTHS
 from app.database import DatabaseManager
 from app.product_store import ProductStore
@@ -86,6 +88,60 @@ class MainWindow(QMainWindow):
         """Сохранять последний выбранный год и записывать в настройки."""
         self._last_used_year = year
         self.settings_manager.set_default_year(year)
+
+    def _setup_shortcuts(self):
+        """Назначить горячие клавиши главному окну."""
+        # Ctrl+N — новый документ
+        QShortcut(QKeySequence("Ctrl+N"), self, activated=self.new_document)
+        # Ctrl+O — открыть документ
+        QShortcut(QKeySequence("Ctrl+O"), self, activated=self.open_document)
+        # Ctrl+S — сохранить черновик (пока no-op, будет в Фазе 3)
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self._shortcut_save_draft)
+        # Ctrl+G — сгенерировать документ
+        QShortcut(QKeySequence("Ctrl+G"), self, activated=self.generate_document)
+        # Ctrl+Shift+Del (рус. "Очистить") — очистить данные
+        QShortcut(QKeySequence("Ctrl+Shift+Delete"), self, activated=self.clear_data)
+        # F1 — справка по горячим клавишам
+        QShortcut(QKeySequence("F1"), self, activated=self._show_help)
+        # Esc — закрыть активный диалог (если есть) или сбросить доп. страницу
+        QShortcut(QKeySequence("Escape"), self, activated=self._shortcut_escape)
+
+    def _shortcut_save_draft(self):
+        """Заглушка для будущего автосохранения черновика (Фаза 3)."""
+        QMessageBox.information(
+            self,
+            "В разработке",
+            "Автосохранение черновика появится в Фазе 3.\n\n"
+            "Сейчас данные хранятся в памяти до явного сохранения через 'Сгенерировать документ'.",
+        )
+
+    def _shortcut_escape(self):
+        """Escape: сбросить активную доп. страницу (вернуться к основной)."""
+        if self.current_additional_page is not None:
+            self.current_additional_page = None
+            self.status_bar_widget.set_ready_text("Возврат к основной странице")
+
+    def _show_help(self):
+        """Показать окно со списком горячих клавиш."""
+        QMessageBox.information(
+            self,
+            "Горячие клавиши",
+            "Глобальные:\n"
+            "  Ctrl+N — Новый документ\n"
+            "  Ctrl+O — Открыть документ\n"
+            "  Ctrl+S — Сохранить черновик (в разработке)\n"
+            "  Ctrl+G — Сгенерировать документ\n"
+            "  Ctrl+Shift+Del — Очистить данные\n"
+            "  Esc — Сбросить активную доп. страницу\n"
+            "  F1 — Эта справка\n\n"
+            "В таблицах:\n"
+            "  Delete — удалить выбранные строки (в наборах)",
+        )
+
+    def refresh_status_bar(self):
+        """Пересчитать счётчики статус-бара. Вызывать после изменения данных."""
+        if hasattr(self, "status_bar_widget"):
+            self.status_bar_widget.refresh()
     
     def init_database(self):
         """Инициализировать базу данных"""
@@ -176,6 +232,9 @@ class MainWindow(QMainWindow):
 
         # Синхронизация выбора детали: вкладка «Изменения материалов» -> «Наборы»
         self.changes_widget.part_selected.connect(self.replacement_sets_widget.set_part)
+        # Обновление статус-бара при изменении данных документа
+        self.changes_widget.document_data_changed.connect(self.refresh_status_bar)
+        self.replacement_sets_widget.document_data_changed.connect(self.refresh_status_bar)
         
         # Кнопки внизу
         button_layout = QHBoxLayout()
@@ -193,8 +252,17 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.btn_clear)
         
         button_layout.addStretch()
-        
+
         main_layout.addLayout(button_layout)
+
+        # Статус-бар внизу окна (счётчики документа, состояние БД)
+        self.status_bar_widget = StatusBarWidget(
+            self.document_data, banned_store=self.banned_store
+        )
+        main_layout.addWidget(self.status_bar_widget)
+
+        # Горячие клавиши
+        self._setup_shortcuts()
     
     def load_catalog(self):
         """Загрузить каталог и обновить виджеты"""
@@ -707,7 +775,8 @@ class MainWindow(QMainWindow):
         self.doc_info_widget.refresh()
         self.changes_widget.refresh()
         self.changes_widget.update_product_filter()
-    
+        self.refresh_status_bar()
+
     def open_document(self):
         """Открыть существующий документ"""
         logger = logging.getLogger(__name__)
@@ -750,6 +819,7 @@ class MainWindow(QMainWindow):
                     self.changes_widget.refresh()
                     self.changes_widget.update_product_filter()
                     display_num = self.document_data.get_display_number()
+                    self.refresh_status_bar()
                     QMessageBox.information(self, "Успех", f"Документ {display_num} загружен")
                 else:
                     QMessageBox.warning(self, "Ошибка", f"Не удалось загрузить документ №{document_number}")

@@ -4,7 +4,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QMessageBox, QFileDialog, QSpinBox, QCheckBox,
-    QComboBox
+    QComboBox, QPlainTextEdit, QGroupBox
 )
 from pathlib import Path
 
@@ -109,13 +109,35 @@ class SettingsDialog(QDialog):
         open_after_layout = QVBoxLayout()
         self.open_after_checkbox = QCheckBox("Автоматически открывать файл после генерации")
         open_after_layout.addWidget(self.open_after_checkbox)
-        
+
         open_after_info = QLabel("После успешной генерации документа файл будет автоматически открыт в Excel для просмотра и печати")
         open_after_info.setStyleSheet("color: gray; font-size: 10px;")
         open_after_layout.addWidget(open_after_info)
-        
+
         layout.addLayout(open_after_layout)
-        
+
+        # Шаблоны причин замены (Фаза 1)
+        templates_group = QGroupBox("Шаблоны причин замены")
+        templates_layout = QVBoxLayout(templates_group)
+        templates_info = QLabel(
+            "Каждый шаблон — с новой строки. Используются в шапке документа "
+            "(кнопка «📋 Шаблон» рядом с полем «Причина»)."
+        )
+        templates_info.setStyleSheet("color: gray; font-size: 10px;")
+        templates_info.setWordWrap(True)
+        templates_layout.addWidget(templates_info)
+
+        self.reason_templates_edit = QPlainTextEdit()
+        self.reason_templates_edit.setMinimumHeight(100)
+        self.reason_templates_edit.setPlaceholderText(
+            "Отсутствие материала на складе\n"
+            "Переход на аналог по решению конструктора\n"
+            "Решение ТКО\n"
+            "…"
+        )
+        templates_layout.addWidget(self.reason_templates_edit)
+        layout.addWidget(templates_group)
+
         layout.addStretch()
         
         # Кнопки
@@ -163,7 +185,11 @@ class SettingsDialog(QDialog):
         # Загружаем настройку автоматического открытия файла
         open_after = self.settings_manager.get_open_after_generate()
         self.open_after_checkbox.setChecked(open_after)
-    
+
+        # Загружаем шаблоны причин замены
+        templates = self.settings_manager.get_reason_templates()
+        self.reason_templates_edit.setPlainText("\n".join(templates))
+
     def _on_month_changed(self, index):
         """Обновить отображение текущего номера при смене месяца"""
         month = self.current_month_combo.currentData()
@@ -227,6 +253,11 @@ class SettingsDialog(QDialog):
             # Сохраняем настройку автоматического открытия файла
             open_after = self.open_after_checkbox.isChecked()
             self.settings_manager.set_open_after_generate(open_after)
+
+            # Сохраняем шаблоны причин (по строкам)
+            templates_text = self.reason_templates_edit.toPlainText()
+            templates_list = [line.strip() for line in templates_text.splitlines() if line.strip()]
+            self.settings_manager.set_reason_templates(templates_list)
             
             # Устанавливаем текущий номер для выбранного месяца (если он был изменен)
             month = self.current_month_combo.currentData()
