@@ -46,3 +46,11 @@ Thumbs.db
 ~$*.xlsx
 ~$*.xls
 
+# Database backups
+data/*.bak-*
+
+# IDEs & agents
+.gigacode/
+.gigaide/
+.agent-instance-id
+

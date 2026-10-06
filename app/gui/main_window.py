@@ -101,6 +101,15 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "pages_stack"):
             return
         if 0 <= index < self.pages_stack.count():
+            cur = self.pages_stack.currentIndex()
+            if cur == index:
+                return
+            if cur == 2 and hasattr(self, "replacement_sets_widget") and self.replacement_sets_widget:
+                if self.replacement_sets_widget.has_unsaved_changes():
+                    if not self.replacement_sets_widget.prompt_unsaved_changes():
+                        if hasattr(self, "sidebar"):
+                            self.sidebar.set_current(cur)
+                        return
             self.pages_stack.setCurrentIndex(index)
             self.sidebar.set_current(index)
             self._update_nav_buttons()
@@ -356,6 +365,10 @@ class MainWindow(QMainWindow):
 
     def import_draft(self) -> None:
         """Импорт документа из JSON-файла."""
+        if hasattr(self, "replacement_sets_widget") and self.replacement_sets_widget:
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Импорт черновика",
             str(PROJECT_ROOT),
@@ -542,6 +555,7 @@ class MainWindow(QMainWindow):
             get_current_additional_page=lambda: self.current_additional_page,
             changes_widget=self.changes_widget
         )
+        self.changes_widget.replacement_sets_widget = self.replacement_sets_widget
         self.pages_stack.addWidget(self.replacement_sets_widget)
 
         # === Страница 4: Предпросмотр ===
@@ -632,6 +646,10 @@ class MainWindow(QMainWindow):
     def load_catalog(self):
         """Загрузить каталог и обновить виджеты"""
         try:
+            if hasattr(self, "replacement_sets_widget") and self.replacement_sets_widget:
+                if self.replacement_sets_widget.has_unsaved_changes():
+                    if not self.replacement_sets_widget.prompt_unsaved_changes():
+                        return
             self.catalog_loader.load()
             self.changes_widget.load_catalog()
             self.replacement_sets_widget.load_catalog()
@@ -1141,6 +1159,10 @@ class MainWindow(QMainWindow):
     
     def new_document(self):
         """Создать новый документ"""
+        if hasattr(self, "replacement_sets_widget") and self.replacement_sets_widget:
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
         # Проверяем, есть ли несохранённые изменения
         if self.document_data.part_changes or self.document_data.products:
             reply = QMessageBox.question(
@@ -1176,6 +1198,10 @@ class MainWindow(QMainWindow):
 
     def open_document(self):
         """Открыть существующий документ"""
+        if hasattr(self, "replacement_sets_widget") and self.replacement_sets_widget:
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
         logger = logging.getLogger(__name__)
         from app.gui.document_selection_dialog import DocumentSelectionDialog
         
@@ -1292,6 +1318,11 @@ class MainWindow(QMainWindow):
     
     def clear_data(self):
         """Очистить все данные"""
+        if hasattr(self, "replacement_sets_widget") and self.replacement_sets_widget:
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
+
         reply = QMessageBox.question(
             self,
             "Подтверждение",
@@ -1315,3 +1346,12 @@ class MainWindow(QMainWindow):
             self._last_saved_at = None
             self._refresh_draft_status_indicator()
             self.changes_widget.update_product_filter()
+
+    def closeEvent(self, event):
+        """Проверка несохранённых данных перед закрытием окна"""
+        if hasattr(self, "replacement_sets_widget") and self.replacement_sets_widget:
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    event.ignore()
+                    return
+        super().closeEvent(event)

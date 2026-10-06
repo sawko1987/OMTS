@@ -44,6 +44,9 @@ class ChangesTableWidget(QWidget):
         self.history_store = history_store or HistoryStore()
         self.product_store = product_store
         self.banned_store = banned_store  # [BAN_FEATURE]
+        self.replacement_sets_widget = None
+        self._current_selected_part = ""
+        self._is_updating_machines = False
         
         # Таймер для debounce поиска (задержка 300мс)
         self.search_timer = QTimer()
@@ -351,6 +354,23 @@ class ChangesTableWidget(QWidget):
     
     def on_machines_selection_changed(self, item: QListWidgetItem):
         """Обработка изменения выбора машин"""
+        if getattr(self, "_is_updating_machines", False):
+            return
+
+        if getattr(self, "replacement_sets_widget", None) and hasattr(self.replacement_sets_widget, "has_unsaved_changes"):
+            if self.replacement_sets_widget.has_unsaved_changes():
+                self._is_updating_machines = True
+                try:
+                    if not self.replacement_sets_widget.prompt_unsaved_changes():
+                        # Откатываем состояние чекбокса
+                        if item:
+                            self.machines_list.blockSignals(True)
+                            item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+                            self.machines_list.blockSignals(False)
+                        return
+                finally:
+                    self._is_updating_machines = False
+
         # Обновляем список выбранных машин
         selected_products = []
         for i in range(self.machines_list.count()):
@@ -368,6 +388,10 @@ class ChangesTableWidget(QWidget):
 
     def set_selected_products(self, products: List[str]) -> None:
         """Программно установить выбранные машины и синхронизировать UI."""
+        if getattr(self, "replacement_sets_widget", None) and hasattr(self.replacement_sets_widget, "has_unsaved_changes"):
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
         selected_products = []
         selected_product_names = set()
         for product in products:
@@ -572,8 +596,24 @@ class ChangesTableWidget(QWidget):
     def on_part_combo_changed(self, text: str):
         """Обработка изменения выбора детали в комбобоксе"""
         part = (text or "").strip()
-        if part:
-            self.part_selected.emit(part)
+        if not part:
+            return
+        if getattr(self, "replacement_sets_widget", None) and hasattr(self.replacement_sets_widget, "has_unsaved_changes"):
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    self.part_combo.blockSignals(True)
+                    if getattr(self, "_current_selected_part", ""):
+                        idx = self.part_combo.findText(self._current_selected_part)
+                        if idx >= 0:
+                            self.part_combo.setCurrentIndex(idx)
+                        else:
+                            self.part_combo.setEditText(self._current_selected_part)
+                    else:
+                        self.part_combo.setEditText("")
+                    self.part_combo.blockSignals(False)
+                    return
+        self._current_selected_part = part
+        self.part_selected.emit(part)
 
     def _on_table_selection_changed(self):
         """Обработка выбора строки в таблице (эмитим выбранную деталь)"""
@@ -584,8 +624,14 @@ class ChangesTableWidget(QWidget):
         if not part_item:
             return
         part = part_item.text().strip()
-        if part:
-            self.part_selected.emit(part)
+        if not part:
+            return
+        if getattr(self, "replacement_sets_widget", None) and hasattr(self.replacement_sets_widget, "has_unsaved_changes"):
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
+        self._current_selected_part = part
+        self.part_selected.emit(part)
     
     def on_part_combo_text_edited(self, text: str):
         """Обработка ввода текста в комбобокс - фильтрация вариантов"""
@@ -646,6 +692,10 @@ class ChangesTableWidget(QWidget):
 
     def _select_all_machines(self):
         """Отметить все машины как выбранные."""
+        if getattr(self, "replacement_sets_widget", None) and hasattr(self.replacement_sets_widget, "has_unsaved_changes"):
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
         if self.machines_list.count() == 0:
             return
         self.machines_list.blockSignals(True)
@@ -659,6 +709,10 @@ class ChangesTableWidget(QWidget):
 
     def _deselect_all_machines(self):
         """Снять отметку со всех машин."""
+        if getattr(self, "replacement_sets_widget", None) and hasattr(self.replacement_sets_widget, "has_unsaved_changes"):
+            if self.replacement_sets_widget.has_unsaved_changes():
+                if not self.replacement_sets_widget.prompt_unsaved_changes():
+                    return
         if self.machines_list.count() == 0:
             return
         self.machines_list.blockSignals(True)

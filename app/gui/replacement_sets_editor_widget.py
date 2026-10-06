@@ -88,6 +88,8 @@ class ReplacementSetsEditorWidget(QWidget):
         self._loaded_set_name: Optional[str] = None
         self._dirty_name: bool = False
         self._dirty_materials: bool = False
+        self._is_switching_part: bool = False
+        self._is_switching_pair: bool = False
 
         self._init_ui()
 
@@ -108,7 +110,7 @@ class ReplacementSetsEditorWidget(QWidget):
         top.addWidget(self.part_combo)
 
         self.btn_refresh = QPushButton("Обновить")
-        self.btn_refresh.clicked.connect(self.refresh)
+        self.btn_refresh.clicked.connect(self._on_refresh_clicked)
         top.addWidget(self.btn_refresh)
         top.addStretch()
         layout.addLayout(top)
@@ -264,6 +266,9 @@ class ReplacementSetsEditorWidget(QWidget):
 
     def load_catalog(self) -> None:
         """Перезагрузить список деталей (для комбобокса)"""
+        if self.has_unsaved_changes():
+            if not self.prompt_unsaved_changes():
+                return
         parts = self.catalog_loader.get_all_parts()
         current = self.part_combo.currentText()
         self.part_combo.blockSignals(True)
@@ -277,16 +282,71 @@ class ReplacementSetsEditorWidget(QWidget):
                 self.part_combo.setEditText(current)
         self.part_combo.blockSignals(False)
 
-    def set_part(self, part_code: str) -> None:
-        part_code = (part_code or "").strip()
-        if not part_code:
-            return
-        self.part_combo.setEditText(part_code)
-        self._current_part = part_code
+    def _on_refresh_clicked(self) -> None:
+        """Обработка нажатия кнопки 'Обновить' с проверкой несохранённых данных"""
+        if self.has_unsaved_changes():
+            if not self.prompt_unsaved_changes():
+                return
         self.refresh()
 
+    def set_part(self, part_code: str) -> bool:
+        if getattr(self, "_is_switching_part", False):
+            return False
+        part_code = (part_code or "").strip()
+        if not part_code:
+            return True
+        if part_code == (self._current_part or ""):
+            return True
+
+        if self.has_unsaved_changes():
+            self._is_switching_part = True
+            try:
+                if not self.prompt_unsaved_changes():
+                    return False
+            finally:
+                self._is_switching_part = False
+
+        self._is_switching_part = True
+        try:
+            self.part_combo.blockSignals(True)
+            self.part_combo.setEditText(part_code)
+            idx = self.part_combo.findText(part_code)
+            if idx >= 0:
+                self.part_combo.setCurrentIndex(idx)
+            self.part_combo.blockSignals(False)
+
+            self._current_part = part_code
+            self.refresh()
+            return True
+        finally:
+            self._is_switching_part = False
+
     def _on_part_changed(self, text: str) -> None:
+        if getattr(self, "_is_switching_part", False):
+            return
         part = (text or "").strip()
+        if part == (self._current_part or ""):
+            return
+
+        if self.has_unsaved_changes():
+            self._is_switching_part = True
+            try:
+                if not self.prompt_unsaved_changes():
+                    # Откат выбора детали в комбобоксе
+                    self.part_combo.blockSignals(True)
+                    if self._current_part:
+                        idx = self.part_combo.findText(self._current_part)
+                        if idx >= 0:
+                            self.part_combo.setCurrentIndex(idx)
+                        else:
+                            self.part_combo.setEditText(self._current_part)
+                    else:
+                        self.part_combo.setEditText("")
+                    self.part_combo.blockSignals(False)
+                    return
+            finally:
+                self._is_switching_part = False
+
         self._current_part = part if part else None
         self.refresh()
 
@@ -403,6 +463,8 @@ class ReplacementSetsEditorWidget(QWidget):
             self.btn_save_and_add.setEnabled(enabled and self.document_data is not None and self._current_part is not None)
 
     def _on_pair_selected(self) -> None:
+        if getattr(self, "_is_switching_pair", False):
+            return
         row = self.sets_table.currentRow()
         if row < 0 or row >= len(self._pairs):
             self._set_editor_enabled(False)
@@ -411,6 +473,25 @@ class ReplacementSetsEditorWidget(QWidget):
         if not to_set.id:
             self._set_editor_enabled(False)
             return
+        if to_set.id == self._current_to_set_id:
+            return
+
+        if self.has_unsaved_changes():
+            self._is_switching_pair = True
+            try:
+                if not self.prompt_unsaved_changes():
+                    # Откатываем выбор строки таблицы
+                    self.sets_table.blockSignals(True)
+                    for r in range(self.sets_table.rowCount()):
+                        it = self.sets_table.item(r, 2)
+                        if it and it.text().strip() == str(self._current_to_set_id):
+                            self.sets_table.selectRow(r)
+                            break
+                    self.sets_table.blockSignals(False)
+                    return
+            finally:
+                self._is_switching_pair = False
+
         self._load_pair(to_set.id)
 
     def _load_pair(self, to_set_id: int) -> None:
@@ -455,6 +536,16 @@ class ReplacementSetsEditorWidget(QWidget):
     def _revert_loaded(self) -> None:
         if not self._current_to_set_id:
             return
+        if self.has_unsaved_changes():
+            reply = QMessageBox.question(
+                self,
+                "Отмена изменений",
+                "Отменить все несохранённые изменения в наборе материалов?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
         self._load_pair(self._current_to_set_id)
 
     def _render_table(self, table: QTableWidget, materials: list[CatalogEntry], is_from: bool) -> None:
@@ -678,10 +769,62 @@ class ReplacementSetsEditorWidget(QWidget):
     # Operations (new/copy/delete/save/split)
     # -----------------------
 
+    def has_unsaved_changes(self) -> bool:
+        """Проверить, есть ли несохранённые изменения в текущем наборе."""
+        if not self._current_to_set_id or not self._loaded_to_set_id:
+            return False
+        return bool(self._dirty_name or self._dirty_materials)
+
+    def prompt_unsaved_changes(self) -> bool:
+        """Спросить пользователя о сохранении изменений и предупредить о потере при отказе.
+        
+        Returns:
+            True, если можно продолжать переход (изменения сохранены или пользователь отказался от сохранения).
+            False, если переход отменён или сохранение не удалось.
+        """
+        if not self.has_unsaved_changes():
+            return True
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Несохранённые изменения")
+        part_info = f" детали «{self._current_part}»" if self._current_part else ""
+        msg.setText(f"В наборе материалов для{part_info} есть несохранённые изменения.\nСохранить изменения перед переключением?")
+        msg.setInformativeText("Внимание: если вы продолжите без сохранения, внесённые изменения не будут сохранены.")
+
+        btn_save = msg.addButton("Сохранить", QMessageBox.AcceptRole)
+        btn_discard = msg.addButton("Не сохранять", QMessageBox.DestructiveRole)
+        btn_cancel = msg.addButton("Отмена", QMessageBox.RejectRole)
+        msg.setDefaultButton(btn_save)
+
+        msg.exec()
+        clicked = msg.clickedButton()
+
+        if clicked == btn_save:
+            if self._save_current(silent=True, reload_ui=False):
+                try:
+                    from app.gui.toast import show_toast, ToastLevel
+                    show_toast(self.window(), "Набор материалов сохранён", ToastLevel.SUCCESS)
+                except Exception:
+                    pass
+                return True
+            else:
+                return False
+        elif clicked == btn_discard:
+            self._dirty_name = False
+            self._dirty_materials = False
+            return True
+        else:
+            return False
+
     def _create_new_pair(self) -> None:
         if not self._current_part:
             QMessageBox.warning(self, "Ошибка", "Сначала выберите деталь")
             return
+
+        if self.has_unsaved_changes():
+            if not self.prompt_unsaved_changes():
+                return
 
         default_name = "Новый набор"
         name, ok = QInputDialog.getText(self, "Новый набор", "Название набора:", text=default_name)
@@ -709,6 +852,11 @@ class ReplacementSetsEditorWidget(QWidget):
     def _copy_pair(self) -> None:
         if not self._current_to_set_id:
             return
+
+        if self.has_unsaved_changes():
+            if not self.prompt_unsaved_changes():
+                return
+
         base = self.name_edit.text().strip()
         default_name = f"{base} (копия)" if base else "Новый набор (копия)"
         name, ok = QInputDialog.getText(self, "Копировать пару", "Название нового набора:", text=default_name)
@@ -729,6 +877,11 @@ class ReplacementSetsEditorWidget(QWidget):
     def _delete_pair(self) -> None:
         if not self._current_to_set_id:
             return
+
+        if self.has_unsaved_changes():
+            if not self.prompt_unsaved_changes():
+                return
+
         reply = QMessageBox.question(
             self,
             "Подтверждение удаления",
@@ -744,11 +897,12 @@ class ReplacementSetsEditorWidget(QWidget):
             return
         self.refresh()
 
-    def _save_current(self, silent: bool = False) -> bool:
+    def _save_current(self, silent: bool = False, reload_ui: bool = True) -> bool:
         """Сохранить текущий набор материалов.
         
         Args:
             silent: Если True, не показывать сообщения об успехе (только об ошибках)
+            reload_ui: Если True, вызвать self.refresh() после успешного сохранения
             
         Returns:
             True если сохранение успешно, False в противном случае
@@ -769,7 +923,9 @@ class ReplacementSetsEditorWidget(QWidget):
         if not self._dirty_materials:
             if not silent:
                 QMessageBox.information(self, "Успех", "Изменения сохранены")
-            self.refresh()
+            self._dirty_name = False
+            if reload_ui:
+                self.refresh()
             return True
 
         # 3) Валидация материалов (только если редактировали материалы)
@@ -825,7 +981,10 @@ class ReplacementSetsEditorWidget(QWidget):
             return False
         if not silent:
             QMessageBox.information(self, "Успех", "Набор сохранён")
-        self.refresh()
+        self._dirty_name = False
+        self._dirty_materials = False
+        if reload_ui:
+            self.refresh()
         return True
 
     def _save_and_add_to_document(self) -> None:
@@ -1004,9 +1163,42 @@ class ReplacementSetsEditorWidget(QWidget):
             self, "Успех", f"Набор сохранён и деталь '{part}' добавлена в документ"
         )
 
+    def _determine_split_name(self, from_rows: list[int]) -> tuple[Optional[str], bool]:
+        """Определить название для нового набора при вынесении.
+
+        Если в 'до' выбран ровно 1 материал: название берется по его наименованию
+        без ввода пользователем. Количество материалов в 'после' не влияет на это.
+        Иначе (0 или более 1 материала в 'до'): запрашивается имя через диалог ввода.
+        Возвращает (name, ok), где ok=False означает отмену диалога пользователем.
+        """
+        if len(from_rows) == 1:
+            row = from_rows[0]
+            mat_name = ""
+            if 0 <= row < len(self._from_materials):
+                mat_name = (self._from_materials[row].before_name or "").strip()
+            if not mat_name and hasattr(self, "from_table"):
+                item = self.from_table.item(row, 1)
+                if item:
+                    mat_name = item.text().strip()
+            if mat_name:
+                return (mat_name, True)
+
+        base = self.name_edit.text().strip() if hasattr(self, "name_edit") else ""
+        default_name = f"{base} (часть)" if base else "Новый набор (часть)"
+        name, ok = QInputDialog.getText(
+            self, "Вынести в новый набор", "Название нового набора:", text=default_name
+        )
+        if not ok:
+            return (None, False)
+        return (name.strip() or None, True)
+
     def _split_copy(self) -> None:
         if not self._current_to_set_id:
             return
+
+        if self.has_unsaved_changes():
+            if not self.prompt_unsaved_changes():
+                return
 
         from_rows = sorted({idx.row() for idx in self.from_table.selectionModel().selectedRows()})
         to_rows = sorted({idx.row() for idx in self.to_table.selectionModel().selectedRows()})
@@ -1014,9 +1206,7 @@ class ReplacementSetsEditorWidget(QWidget):
             QMessageBox.warning(self, "Ошибка", "Выделите строки в 'до' и/или 'после' для вынесения")
             return
 
-        base = self.name_edit.text().strip()
-        default_name = f"{base} (часть)" if base else "Новый набор (часть)"
-        name, ok = QInputDialog.getText(self, "Вынести в новый набор", "Название нового набора:", text=default_name)
+        name, ok = self._determine_split_name(from_rows)
         if not ok:
             return
 
@@ -1024,7 +1214,7 @@ class ReplacementSetsEditorWidget(QWidget):
             self._current_to_set_id,
             from_rows,
             to_rows,
-            name.strip() or None,
+            name,
         )
         if not new_to_id:
             QMessageBox.warning(self, "Ошибка", "Не удалось создать новый набор из выделенного")
@@ -1095,6 +1285,10 @@ class ReplacementSetsEditorWidget(QWidget):
 
     def _add_part_to_document(self) -> None:
         """Добавить текущую деталь в документ"""
+        if self.has_unsaved_changes():
+            if not self.prompt_unsaved_changes():
+                return
+
         if not self.document_data:
             QMessageBox.warning(self, "Ошибка", "Документ не инициализирован")
             return

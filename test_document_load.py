@@ -18,7 +18,7 @@ documents = document_store.get_all_documents()
 
 print(f"Total documents returned: {len(documents)}")
 print("\n=== All documents ===")
-for doc_number, year, created_at, file_path in documents:
+for doc_number, year, month, created_at, file_path in documents:
     file_name = Path(file_path).name if file_path else ""
     print(f"Doc {doc_number}/{year}, Created: {created_at}, File: {file_name}")
     
